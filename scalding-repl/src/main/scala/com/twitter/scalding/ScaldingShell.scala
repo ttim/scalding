@@ -40,7 +40,7 @@ trait BaseScaldingShell extends MainGenericRunner {
   /**
    * An instance of the Scala REPL the user will interact with.
    */
-  private var scaldingREPL: Option[ILoop] = None
+  protected var scaldingREPL: Option[ILoop] = None
 
   /**
    * An instance of the default configuration for the REPL
@@ -81,7 +81,8 @@ trait BaseScaldingShell extends MainGenericRunner {
     // Force the repl to be synchronous, so all cmds are executed in the same thread
     command.settings.Yreplsync.value = true
 
-    scaldingREPL = Some(scaldingREPLProvider.apply())
+    val repl = scaldingREPLProvider.apply()
+    scaldingREPL = Some(repl)
     replState.mode = mode
     replState.customConfig = replState.customConfig ++ (mode match {
       case _: HadoopMode => cfg
@@ -95,7 +96,7 @@ trait BaseScaldingShell extends MainGenericRunner {
     }
 
     replState.printModeBanner()
-    scaldingREPL.get.process(command.settings)
+    repl.process(command.settings)
   }
 
   // This both updates the jobConf with hadoop arguments
@@ -122,8 +123,8 @@ trait BaseScaldingShell extends MainGenericRunner {
    *
    * @param args from the command line.
    */
-  def main(args: Array[String]) {
-    val retVal = process(args)
+  def main(args: Array[String]): Unit = {
+    val retVal = process(ExpandLibJarsGlobs(args))
     if (!retVal) {
       sys.exit(1)
     }
@@ -172,7 +173,7 @@ trait BaseScaldingShell extends MainGenericRunner {
   private def addVirtualDirectoryToJar(
     dir: VirtualDirectory,
     entryPath: String,
-    jarStream: JarOutputStream) {
+    jarStream: JarOutputStream): Unit = {
     dir.foreach { file =>
       if (file.isDirectory) {
         // Recursively descend into subdirectories, adjusting the package name as we do.

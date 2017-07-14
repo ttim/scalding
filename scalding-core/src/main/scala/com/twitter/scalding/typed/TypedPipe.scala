@@ -16,13 +16,13 @@ limitations under the License.
 package com.twitter.scalding.typed
 
 import java.io.{ OutputStream, InputStream, Serializable }
-import java.util.Random
+import java.util.{ Random, UUID }
 
 import cascading.flow.FlowDef
 import cascading.pipe.{ Each, Pipe }
 import cascading.tap.Tap
-import cascading.tuple.{ Fields, Tuple => CTuple, TupleEntry }
-import com.twitter.algebird.{ Aggregator, Monoid, Semigroup }
+import cascading.tuple.{ Fields, TupleEntry }
+import com.twitter.algebird.{ Aggregator, Batched, Monoid, Semigroup }
 import com.twitter.scalding.TupleConverter.{ TupleEntryConverter, singleConverter, tuple2Converter }
 import com.twitter.scalding.TupleSetter.{ singleSetter, tup2Setter }
 import com.twitter.scalding._
@@ -102,7 +102,7 @@ object TypedPipe extends Serializable {
    * TypedPipe instances are monoids. They are isomorphic to multisets.
    */
   implicit def typedPipeMonoid[T]: Monoid[TypedPipe[T]] = new Monoid[TypedPipe[T]] {
-    def zero = empty
+    def zero = TypedPipe.empty
     def plus(left: TypedPipe[T], right: TypedPipe[T]): TypedPipe[T] =
       left ++ right
   }
@@ -265,7 +265,7 @@ trait TypedPipe[+T] extends Serializable {
     implicit val ordT: Ordering[U] = ord.asInstanceOf[Ordering[U]]
 
     // Semigroup to handle duplicates for a given key might have different values.
-    implicit val sg = new Semigroup[T] {
+    implicit val sg: Semigroup[T] = new Semigroup[T] {
       def plus(a: T, b: T) = b
     }
 
@@ -471,7 +471,18 @@ trait TypedPipe[+T] extends Serializable {
    * Reasonably common shortcut for cases of total associative/commutative reduction
    * returns a ValuePipe with only one element if there is any input, otherwise EmptyValue.
    */
-  def sum[U >: T](implicit plus: Semigroup[U]): ValuePipe[U] = ComputedValue(groupAll.sum[U].values)
+  def sum[U >: T](implicit plus: Semigroup[U]): ValuePipe[U] = {
+    // every 1000 items, compact.
+    lazy implicit val batchedSG: Semigroup[Batched[U]] = Batched.compactingSemigroup[U](1000)
+    ComputedValue(map { t => ((), Batched[U](t)) }
+      .sumByLocalKeys
+      // remove the Batched before going to the reducers
+      .map { case (_, batched) => batched.sum }
+      .groupAll
+      .forceToReducers
+      .sum
+      .values)
+  }
 
   /**
    * Reasonably common shortcut for cases of associative/commutative reduction by Key
@@ -492,14 +503,18 @@ trait TypedPipe[+T] extends Serializable {
     val cachedRandomUUID = java.util.UUID.randomUUID
     lazy val inMemoryDest = new MemorySink[T]
 
-    def hadoopTypedSource(conf: Config): TypedSource[T] with TypedSink[T] = {
-      // come up with unique temporary filename, use the config here
-      // TODO: refactor into TemporarySequenceFile class
+    def temporaryPath(conf: Config, uuid: UUID): String = {
       val tmpDir = conf.get("hadoop.tmp.dir")
         .orElse(conf.get("cascading.tmp.dir"))
         .getOrElse("/tmp")
 
-      val tmpSeq = tmpDir + "/scalding/snapshot-" + cachedRandomUUID + ".seq"
+      tmpDir + "/scalding/snapshot-" + uuid + ".seq"
+    }
+
+    def hadoopTypedSource(conf: Config): TypedSource[T] with TypedSink[T] = {
+      // come up with unique temporary filename, use the config here
+      // TODO: refactor into TemporarySequenceFile class
+      val tmpSeq = temporaryPath(conf, cachedRandomUUID)
       source.TypedSequenceFile[T](tmpSeq)
 
     }
@@ -521,7 +536,16 @@ trait TypedPipe[+T] extends Serializable {
       }
     }
 
-    Execution.write(writeFn, readFn)
+    val filesToDeleteFn = { (conf: Config, mode: Mode) =>
+      mode match {
+        case _: CascadingLocal => // Local or Test mode
+          Set[String]()
+        case _: HadoopMode =>
+          Set(temporaryPath(conf, cachedRandomUUID))
+      }
+    }
+
+    Execution.write(writeFn, readFn, filesToDeleteFn)
   }
 
   /**
@@ -824,6 +848,7 @@ final case class IterablePipe[T](iterable: Iterable[T]) extends TypedPipe[T] {
     Semigroup.sumOption[U](iterable).map(LiteralValue(_))
       .getOrElse(EmptyValue)
 
+  @SuppressWarnings(Array("org.wartremover.warts.OptionPartial"))
   override def sumByLocalKeys[K, V](implicit ev: T <:< (K, V), sg: Semigroup[V]) = {
     val kvit = raiseTo[(K, V)] match {
       case IterablePipe(kviter) => kviter
@@ -890,8 +915,6 @@ class TypedPipeFactory[T] private (@transient val next: NoStackAndThen[(FlowDef,
   override def filter(f: T => Boolean): TypedPipe[T] = andThen(_.filter(f))
   override def flatMap[U](f: T => TraversableOnce[U]): TypedPipe[U] = andThen(_.flatMap(f))
   override def map[U](f: T => U): TypedPipe[U] = andThen(_.map(f))
-
-  override def limit(count: Int) = andThen(_.limit(count))
 
   override def sumByLocalKeys[K, V](implicit ev: T <:< (K, V), sg: Semigroup[V]) =
     andThen(_.sumByLocalKeys[K, V])
@@ -987,6 +1010,23 @@ class TypedPipeInst[T] private[scalding] (@transient inpipe: Pipe,
     RichPipe(inpipe).flatMapTo[TupleEntry, U](fields -> fieldNames)(flatMapFn)
   }
 
+  override def sumByLocalKeys[K, V](implicit ev: T <:< (K, V), sg: Semigroup[V]): TypedPipe[(K, V)] = {
+    import Dsl.{ fields => ofields, _ }
+    val destFields: Fields = ('key, 'value)
+    val selfKV = raiseTo[(K, V)]
+
+    val msr = new TypedMapsideReduce[K, V](
+      flatMapFn.asInstanceOf[FlatMapFn[(K, V)]],
+      sg,
+      fields,
+      'key,
+      'value,
+      None)(tup2Setter)
+    TypedPipe.from[(K, V)](
+      inpipe.eachTo(fields -> destFields) { _ => msr },
+      destFields)(localFlowDef, mode, tuple2Converter)
+  }
+
   override def toIterableExecution: Execution[Iterable[T]] =
     openIfHead match {
       // TODO: it might be good to apply flatMaps locally,
@@ -1062,7 +1102,7 @@ final case class MergedTypedPipe[T](left: TypedPipe[T], right: TypedPipe[T]) ext
         case (pipe, 1) => pipe
         case (pipe, cnt) => pipe.flatMap(List.fill(cnt)(_).iterator)
       }
-      .map(_.toPipe[U](fieldNames)(flowDef, mode, setter))
+      .map(_.toPipe[U](fieldNames)(flowDef, mode, setter)) // linter:ignore
       .toList
 
     if (merged.size == 1) {

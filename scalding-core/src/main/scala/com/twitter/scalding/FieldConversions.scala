@@ -49,13 +49,11 @@ trait LowPriorityFieldConversions {
    * Lists are handled by an implicit in FieldConversions, which have
    * higher priority.
    */
-  implicit def productToFields(f: Product) = {
+  implicit def productToFields(f: Product): Fields = {
     val fields = new Fields(f.productIterator.map { anyToFieldArg }.toSeq: _*)
     f.productIterator.foreach {
-      _ match {
-        case field: Field[_] => fields.setComparator(field.id, field.ord)
-        case _ =>
-      }
+      case field: Field[_] => fields.setComparator(field.id, field.ord)
+      case _ =>
     }
     fields
   }
@@ -85,11 +83,9 @@ trait FieldConversions extends LowPriorityFieldConversions {
    * 4) Otherwise, ALL is used.
    */
   def defaultMode(fromFields: Fields, toFields: Fields): Fields = {
-    if (toFields.isArguments) {
-      //In this case we replace the input with the output
-      Fields.REPLACE
-    } else if (fromFields.isAll && toFields.isAll) {
-      // if you go from all to all, you must mean replace (ALL would fail at the cascading layer)
+    if (toFields.isArguments || (fromFields.isAll && toFields.isAll)) {
+      // 1. In this case we replace the input with the output or:
+      // 2. if you go from all to all, you must mean replace (ALL would fail at the cascading layer)
       Fields.REPLACE
     } else if (fromFields.size == 0) {
       //This is all the UNKNOWN, ALL, etc...
@@ -113,29 +109,29 @@ trait FieldConversions extends LowPriorityFieldConversions {
   }
 
   //Single entry fields:
-  implicit def unitToFields(u: Unit) = Fields.NONE
-  implicit def intToFields(x: Int) = new Fields(new java.lang.Integer(x))
-  implicit def integerToFields(x: java.lang.Integer) = new Fields(x)
-  implicit def stringToFields(x: String) = new Fields(x)
-  implicit def enumValueToFields(x: Enumeration#Value) = new Fields(x.toString)
+  implicit def unitToFields(u: Unit): Fields = Fields.NONE // linter:ignore
+  implicit def intToFields(x: Int): Fields = new Fields(new java.lang.Integer(x))
+  implicit def integerToFields(x: java.lang.Integer): Fields = new Fields(x)
+  implicit def stringToFields(x: String): Fields = new Fields(x)
+  implicit def enumValueToFields(x: Enumeration#Value): Fields = new Fields(x.toString)
   /**
    * '* means Fields.ALL, otherwise we take the .name
    */
-  implicit def symbolToFields(x: Symbol) = {
+  implicit def symbolToFields(x: Symbol): Fields = {
     if (x == '*) {
       Fields.ALL
     } else {
       new Fields(x.name)
     }
   }
-  implicit def fieldToFields(f: Field[_]) = RichFields(f)
+  implicit def fieldToFields(f: Field[_]): RichFields = RichFields(f)
 
   @tailrec
   final def newSymbol(avoid: Set[Symbol], guess: Symbol, trial: Int = 0): Symbol = {
     if (!avoid(guess)) {
       //We are good:
       guess
-    } else if (0 == trial) {
+    } else if (trial == 0) {
       newSymbol(avoid, guess, 1)
     } else {
       val newGuess = Symbol(guess.name + trial.toString)
@@ -173,24 +169,22 @@ trait FieldConversions extends LowPriorityFieldConversions {
   implicit def fromEnum[T <: Enumeration](enumeration: T): Fields =
     new Fields(enumeration.values.toList.map { _.toString }: _*)
 
-  implicit def fields[T <: TraversableOnce[Symbol]](f: T) = new Fields(f.toSeq.map(_.name): _*)
-  implicit def strFields[T <: TraversableOnce[String]](f: T) = new Fields(f.toSeq: _*)
-  implicit def intFields[T <: TraversableOnce[Int]](f: T) = {
+  implicit def fields[T <: TraversableOnce[Symbol]](f: T): Fields = new Fields(f.toSeq.map(_.name): _*)
+  implicit def strFields[T <: TraversableOnce[String]](f: T): Fields = new Fields(f.toSeq: _*)
+  implicit def intFields[T <: TraversableOnce[Int]](f: T): Fields = {
     new Fields(f.toSeq.map { new java.lang.Integer(_) }: _*)
   }
-  implicit def fieldFields[T <: TraversableOnce[Field[_]]](f: T) = RichFields(f.toSeq)
+  implicit def fieldFields[T <: TraversableOnce[Field[_]]](f: T): RichFields = RichFields(f.toSeq)
   /**
    * Useful to convert f : Any* to Fields.  This handles mixed cases ("hey", 'you).
    * Not sure we should be this flexible, but given that Cascading will throw an
    * exception before scheduling the job, I guess this is okay.
    */
-  implicit def parseAnySeqToFields[T <: TraversableOnce[Any]](anyf: T) = {
+  implicit def parseAnySeqToFields[T <: TraversableOnce[Any]](anyf: T): Fields = {
     val fields = new Fields(anyf.toSeq.map { anyToFieldArg }: _*)
     anyf.foreach {
-      _ match {
-        case field: Field[_] => fields.setComparator(field.id, field.ord)
-        case _ =>
-      }
+      case field: Field[_] => fields.setComparator(field.id, field.ord)
+      case _ =>
     }
     fields
   }

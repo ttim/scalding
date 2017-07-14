@@ -289,6 +289,7 @@ class GroupBuilder(val groupFields: Fields) extends FoldOperations[GroupBuilder]
     gb
   }
 
+  @SuppressWarnings(Array("org.wartremover.warts.OptionPartial"))
   def schedule(name: String, pipe: Pipe): Pipe = {
     val maybeProjectedPipe = projectFields.map { pipe.project(_) }.getOrElse(pipe)
     groupMode match {
@@ -322,15 +323,16 @@ class GroupBuilder(val groupFields: Fields) extends FoldOperations[GroupBuilder]
    */
   def sortBy(f: Fields): GroupBuilder = {
     reds = None
-    sortF = sortF match {
-      case None => Some(f)
+    val sort = sortF match {
+      case None => f
       case Some(sf) => {
         sf.append(f)
-        Some(sf)
+        sf
       }
     }
+    sortF = Some(sort)
     // Update projectFields
-    projectFields = projectFields.map { Fields.merge(_, sortF.get) }
+    projectFields = projectFields.map { Fields.merge(_, sort) }
     this
   }
 
@@ -350,7 +352,7 @@ class GroupBuilder(val groupFields: Fields) extends FoldOperations[GroupBuilder]
    * beginning of block with access to expensive nonserializable state. The state object should
    * contain a function release() for resource management purpose.
    */
-  def using[C <: { def release() }](bf: => C) = new {
+  def using[C <: { def release(): Unit }](bf: => C) = new {
 
     /**
      * mapStream with state.
@@ -364,7 +366,7 @@ class GroupBuilder(val groupFields: Fields) extends FoldOperations[GroupBuilder]
       val b = new SideEffectBufferOp[Unit, T, C, X](
         (), bf,
         (u: Unit, c: C, it: Iterator[T]) => mapfn(c, it),
-        new Function1[C, Unit] with java.io.Serializable { def apply(c: C) { c.release() } },
+        new Function1[C, Unit] with java.io.Serializable { def apply(c: C): Unit = { c.release() } },
         outFields, conv, setter)
       every(pipe => new Every(pipe, inFields, b, defaultMode(inFields, outFields)))
     }
@@ -379,6 +381,8 @@ class GroupBuilder(val groupFields: Fields) extends FoldOperations[GroupBuilder]
 class ScanLeftIterator[T, U](it: Iterator[T], init: U, fn: (U, T) => U) extends Iterator[U] with java.io.Serializable {
   protected var prev: Option[U] = None
   def hasNext: Boolean = { prev.isEmpty || it.hasNext }
+  // Don't use pattern matching in a performance-critical section
+  @SuppressWarnings(Array("org.wartremover.warts.OptionPartial"))
   def next = {
     prev = prev.map { fn(_, it.next) }
       .orElse(Some(init))

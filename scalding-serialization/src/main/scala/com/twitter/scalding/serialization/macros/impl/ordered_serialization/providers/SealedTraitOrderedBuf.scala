@@ -25,7 +25,7 @@ object SealedTraitOrderedBuf {
     import c.universe._
 
     val pf: PartialFunction[c.Type, TreeOrderedBuf[c.type]] = {
-      case tpe if (tpe.typeSymbol.isClass && tpe.typeSymbol.asClass.isTrait) => SealedTraitOrderedBuf(c)(buildDispatcher, tpe)
+      case tpe if (tpe.typeSymbol.isClass && (tpe.typeSymbol.asClass.isAbstractClass || tpe.typeSymbol.asClass.isTrait)) => SealedTraitOrderedBuf(c)(buildDispatcher, tpe)
     }
     pf
   }
@@ -34,7 +34,7 @@ object SealedTraitOrderedBuf {
     import c.universe._
     def freshT(id: String) = newTermName(c.fresh(s"$id"))
 
-    val knownDirectSubclasses = outerType.typeSymbol.asClass.knownDirectSubclasses
+    val knownDirectSubclasses = StableKnownDirectSubclasses(c)(outerType)
 
     if (knownDirectSubclasses.isEmpty)
       c.abort(c.enclosingPosition, s"Unable to access any knownDirectSubclasses for $outerType , a bug in scala 2.10/2.11 makes this unreliable.")
@@ -44,7 +44,7 @@ object SealedTraitOrderedBuf {
     }
 
     if (!subClassesValid)
-      c.abort(c.enclosingPosition, s"We only support the extension of a sealed trait with case classes.")
+      c.abort(c.enclosingPosition, "We only support the extension of a sealed trait with case classes.")
 
     val dispatcher = buildDispatcher
 
@@ -66,7 +66,8 @@ object SealedTraitOrderedBuf {
       override def get(inputStream: ctx.TermName): ctx.Tree = SealedTraitLike.get(c)(inputStream)(subData)
       override def compare(elementA: ctx.TermName, elementB: ctx.TermName): ctx.Tree = SealedTraitLike.compare(c)(outerType, elementA, elementB)(subData)
       override def length(element: Tree): CompileTimeLengthTypes[c.type] = SealedTraitLike.length(c)(element)(subData)
-      override val lazyOuterVariables: Map[String, ctx.Tree] = subData.map(_._3).map(_.lazyOuterVariables).reduce(_ ++ _)
+      override val lazyOuterVariables: Map[String, ctx.Tree] =
+        subData.map(_._3.lazyOuterVariables).reduce(_ ++ _)
     }
   }
 }

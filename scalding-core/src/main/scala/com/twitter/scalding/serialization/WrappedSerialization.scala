@@ -34,8 +34,12 @@ class WrappedSerialization[T] extends HSerialization[T] with Configurable {
   private var conf: Option[Configuration] = None
   private var serializations: Map[Class[_], Serialization[_]] = Map.empty
 
+  /* This use of `_.get` can't be fixed since this is constrained by
+   * Hadoop's `Configurable` interface.
+   */
+  @SuppressWarnings(Array("org.wartremover.warts.OptionPartial"))
   override def getConf: Configuration = conf.get
-  override def setConf(config: Configuration) {
+  override def setConf(config: Configuration): Unit = {
     conf = Some(config)
     serializations = WrappedSerialization.getBinary(config)
   }
@@ -83,7 +87,7 @@ object WrappedSerialization {
   type ClassSerialization[T] = (Class[T], Serialization[T])
 
   private def getSerializer[U]: Injection[Externalizer[U], String] = {
-    implicit val initialInj = JavaSerializationInjection[Externalizer[U]]
+    implicit val initialInj: Injection[Externalizer[U], Array[Byte]] = JavaSerializationInjection[Externalizer[U]]
     Injection.connect[Externalizer[U], Array[Byte], Base64String, String]
   }
 

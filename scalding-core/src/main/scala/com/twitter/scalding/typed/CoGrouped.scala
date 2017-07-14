@@ -94,7 +94,7 @@ trait CoGroupable[K, +R] extends HasReducers with HasDescription with java.io.Se
 
     new CoGrouped[K, R2] {
       val inputs = self.inputs ++ smaller.inputs
-      val reducers = (self.reducers.toIterable ++ smaller.reducers.toIterable).reduceOption(_ max _)
+      val reducers = (self.reducers.iterator ++ smaller.reducers.iterator).reduceOption(_ max _)
       val descriptions: Seq[String] = self.descriptions ++ smaller.descriptions
       def keyOrdering = smaller.keyOrdering
 
@@ -333,6 +333,8 @@ abstract class CoGroupedJoiner[K](inputSize: Int,
 
   override def getIterator(jc: JoinerClosure) = {
     val iters = (0 until distinctSize).map { jc.getIterator(_).asScala.buffered }
+    // This use of `_.get` is safe, but difficult to prove in the types.
+    @SuppressWarnings(Array("org.wartremover.warts.OptionPartial"))
     val keyTuple = iters
       .collectFirst { case iter if iter.nonEmpty => iter.head }
       .get // One of these must have a key

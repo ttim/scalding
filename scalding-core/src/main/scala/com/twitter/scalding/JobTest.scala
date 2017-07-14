@@ -26,12 +26,16 @@ import org.apache.hadoop.mapred.JobConf
 import scala.util.Try
 
 object JobTest {
+
+  @deprecated(message = "Use the non-reflection based JobTest apply methods", since = "0.16.1")
   def apply(jobName: String) = {
     new JobTest((args: Args) => Job(jobName, args))
   }
+
   def apply(cons: (Args) => Job) = {
     new JobTest(cons)
   }
+
   def apply[T <: Job: Manifest] = {
     val cons = { (args: Args) =>
       manifest[T].runtimeClass
@@ -100,18 +104,21 @@ class JobTest(cons: (Args) => Job) {
   def ifSource[T](fn: PartialFunction[Source, Iterable[T]])(implicit setter: TupleSetter[T]): JobTest =
     source(fn.lift)
 
-  def source(s: Source, iTuple: Iterable[Product]): JobTest =
-    source[Product](s, iTuple)(TupleSetter.ProductSetter)
-
   def source[T](s: Source, iTuple: Iterable[T])(implicit setter: TupleSetter[T]): JobTest =
     sourceBuffer(s, iTuple)
 
+  // This use of `_.get` is probably safe, but difficult to prove correct
+  @SuppressWarnings(Array("org.wartremover.warts.OptionPartial"))
   def sink[A](s: Source)(op: Buffer[A] => Unit)(implicit conv: TupleConverter[A]) = {
     if (sourceMap(s).isEmpty) {
       // if s is also used as a source, we shouldn't reset its buffer
       source(s, new ListBuffer[Tuple])
     }
     val buffer = sourceMap(s).get
+    /* NOTE: `HadoopTest.finalize` depends on `sinkSet` matching the set of
+     * "keys" in the `sourceMap`.  Do not change the following line unless
+     * you also modify the `finalize` function accordingly.
+     */
     sinkSet += s
     callbacks += (() => op(buffer.map { tup => conv(new TupleEntry(tup)) }))
     this
@@ -163,7 +170,7 @@ class JobTest(cons: (Args) => Job) {
   }
 
   // This SITS is unfortunately needed to get around Specs
-  def finish: Unit = { () }
+  def finish(): Unit = { () }
 
   def validate(v: Boolean) = {
     validateJob = v
@@ -171,7 +178,7 @@ class JobTest(cons: (Args) => Job) {
   }
 
   // Registers test files, initializes the global mode, and creates a job.
-  private def initJob(useHadoop: Boolean, job: Option[JobConf] = None): Job = {
+  private[scalding] def initJob(useHadoop: Boolean, job: Option[JobConf] = None): Job = {
     // Create a global mode to use for testing.
     val testMode: TestMode =
       if (useHadoop) {
@@ -193,6 +200,7 @@ class JobTest(cons: (Args) => Job) {
   }
 
   @tailrec
+  @SuppressWarnings(Array("org.wartremover.warts.OptionPartial"))
   private final def runJob(job: Job, runNext: Boolean): Unit = {
     // Disable automatic cascading update
     System.setProperty("cascading.update.skip", "true")
@@ -205,11 +213,11 @@ class JobTest(cons: (Args) => Job) {
     }
 
     if (validateJob) {
-      job.validate
+      job.validate()
     }
-    job.run
+    job.run()
     // Make sure to clean the state:
-    job.clear
+    job.clear()
 
     val next: Option[Job] = if (runNext) { job.next } else { None }
     next match {
@@ -217,6 +225,10 @@ class JobTest(cons: (Args) => Job) {
       case None => {
         job.mode match {
           case hadoopTest @ HadoopTest(_, _) => {
+            /* NOTE: `HadoopTest.finalize` depends on `sinkSet` matching the set of
+             * "keys" in the `sourceMap`.  Do not change the following line unless
+             * you also modify the `finalize` function accordingly.
+             */
             // The sinks are written to disk, we need to clean them up:
             sinkSet.foreach{ hadoopTest.finalize(_) }
           }

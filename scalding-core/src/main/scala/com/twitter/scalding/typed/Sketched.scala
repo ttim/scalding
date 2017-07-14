@@ -15,9 +15,10 @@ limitations under the License.
 */
 package com.twitter.scalding.typed
 
-import com.twitter.algebird.{ Bytes, CMS, CMSHasherImplicits }
+import com.twitter.algebird.{ Bytes, CMS, CMSHasherImplicits, Batched }
 import com.twitter.scalding.serialization.macros.impl.BinaryOrdering._
 import com.twitter.scalding.serialization.{ OrderedSerialization, OrderedSerialization2 }
+import com.twitter.algebird.CMSMonoid
 
 import scala.language.experimental.macros
 
@@ -40,14 +41,22 @@ case class Sketched[K, V](pipe: TypedPipe[(K, V)],
 
   def reducers = Some(numReducers)
 
-  private lazy implicit val cms = CMS.monoid[Bytes](eps, delta, seed)
-  lazy val sketch: TypedPipe[CMS[Bytes]] =
+  private lazy implicit val cms: CMSMonoid[Bytes] = CMS.monoid[Bytes](eps, delta, seed)
+  lazy val sketch: TypedPipe[CMS[Bytes]] = {
+    // every 10k items, compact into a CMS to prevent very slow mappers
+    lazy implicit val batchedSG: com.twitter.algebird.Semigroup[Batched[CMS[Bytes]]] = Batched.compactingSemigroup[CMS[Bytes]](10000)
+
     pipe
-      .map { case (k, _) => cms.create(Bytes(serialization(k))) }
+      .map { case (k, _) => ((), Batched(cms.create(Bytes(serialize(k))))) }
+      .sumByLocalKeys
+      .map {
+        case (_, batched) => batched.sum
+      } // remove the Batched before going to the reducers
       .groupAll
       .sum
       .values
-      .forceToDisk
+      .forceToDisk // make sure we materialize when we have 1 item
+  }
 
   /**
    * Like a hashJoin, this joiner does not see all the values V at one time, only one at a time.
@@ -81,7 +90,7 @@ case class SketchJoined[K: Ordering, V, V2, R](left: Sketched[K, V],
   private def flatMapWithReplicas[W](pipe: TypedPipe[(K, W)])(fn: Int => Iterable[Int]) =
     pipe.cross(left.sketch).flatMap{
       case ((k, w), cms) =>
-        val maxPerReducer = (cms.totalCount / numReducers) * maxReducerFraction + 1
+        val maxPerReducer = ((cms.totalCount * maxReducerFraction) / numReducers) + 1
         val maxReplicas = (cms.frequency(Bytes(left.serialize(k))).estimate.toDouble / maxPerReducer)
         //if the frequency is 0, maxReplicas.ceil will be 0 so we will filter out this key entirely
         //if it's < maxPerReducer, the ceil will round maxReplicas up to 1 to ensure we still see it

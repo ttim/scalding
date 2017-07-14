@@ -542,8 +542,27 @@ case class BoxedOrderedSerialization[K](box: K => Boxed[K],
   override def dynamicSize(k: Boxed[K]) = ord.dynamicSize(k.get)
 }
 
-object Boxed {
-  private[this] val allBoxes = List(
+// Moving boxed lamdbas into a new object and breaking them up into 2 lists
+// to get around this Scala 2.12 bug: https://issues.scala-lang.org/browse/SI-10232
+object BoxedLambdas {
+  /* You might wonder: "Why not do something a little more type-safe like this?"
+   *
+   *     private[this] def f0[K](t: K) = new Boxed0(t)
+   *     private[this] def f1[K](t: K) = new Boxed1(t)
+   *     ...
+   *
+   *    private[this] def allBoxes[K]: List[(K => Boxed[K], Class[_ <: Boxed[K]])] =
+   *      List(
+   *        (f0[K](_), classOf[Boxed0[K]]),
+   *        (f1[K](_), classOf[Boxed1[K]]),
+   *        ...
+   *
+   * The problem with that is that you can only safely store `val`s in an
+   * `AtomicReference`, but `val`s cannot polymorphic, which is the reason for
+   * using `Any` here instead of parametrizing everything over a type parameter
+   * `K`.
+   */
+  private[serialization] val boxes1 = List(
     ({ t: Any => new Boxed0(t) }, classOf[Boxed0[Any]]),
     ({ t: Any => new Boxed1(t) }, classOf[Boxed1[Any]]),
     ({ t: Any => new Boxed2(t) }, classOf[Boxed2[Any]]),
@@ -668,7 +687,9 @@ object Boxed {
     ({ t: Any => new Boxed121(t) }, classOf[Boxed121[Any]]),
     ({ t: Any => new Boxed122(t) }, classOf[Boxed122[Any]]),
     ({ t: Any => new Boxed123(t) }, classOf[Boxed123[Any]]),
-    ({ t: Any => new Boxed124(t) }, classOf[Boxed124[Any]]),
+    ({ t: Any => new Boxed124(t) }, classOf[Boxed124[Any]]))
+
+  private[serialization] val boxes2 = List(
     ({ t: Any => new Boxed125(t) }, classOf[Boxed125[Any]]),
     ({ t: Any => new Boxed126(t) }, classOf[Boxed126[Any]]),
     ({ t: Any => new Boxed127(t) }, classOf[Boxed127[Any]]),
@@ -795,16 +816,45 @@ object Boxed {
     ({ t: Any => new Boxed248(t) }, classOf[Boxed248[Any]]),
     ({ t: Any => new Boxed249(t) }, classOf[Boxed249[Any]]),
     ({ t: Any => new Boxed250(t) }, classOf[Boxed250[Any]]))
+}
+
+object Boxed {
+  import BoxedLambdas._
+
+  private[this] val allBoxes = boxes1 ++ boxes2
 
   private[this] val boxes: AtomicReference[List[(Any => Boxed[Any], Class[_ <: Boxed[Any]])]] =
     new AtomicReference(allBoxes)
 
   def allClasses: Seq[Class[_ <: Boxed[_]]] = allBoxes.map(_._2)
 
-  def next[K]: (K => Boxed[K], Class[Boxed[K]]) = boxes.get match {
+  private[this] val boxedCache = new java.util.concurrent.ConcurrentHashMap[AnyRef, (Any => Boxed[Any], Class[Boxed[Any]])]()
+
+  private[scalding] def nextCached[K](cacheKey: Option[AnyRef]): (K => Boxed[K], Class[Boxed[K]]) =
+    cacheKey match {
+      case Some(cls) =>
+        val untypedRes = Option(boxedCache.get(cls)) match {
+          case Some(r) => r
+          case None =>
+            val r = next[Any]()
+            boxedCache.putIfAbsent(cls, r)
+            r
+        }
+        untypedRes.asInstanceOf[(K => Boxed[K], Class[Boxed[K]])]
+      case None => next[K]()
+    }
+
+  def next[K](): (K => Boxed[K], Class[Boxed[K]]) = boxes.get match {
     case list @ (h :: tail) if boxes.compareAndSet(list, tail) =>
       h.asInstanceOf[(K => Boxed[K], Class[Boxed[K]])]
-    case (h :: tail) => next[K] // Try again
-    case Nil => sys.error("Exhausted the boxed classes")
+    case (h :: tail) => next[K]() // Try again
+    case Nil => sys.error(
+      """|Scalding's ordered serialization logic exhausted the finite supply of boxed classes.
+         |
+         |Explanation: Scalding's ordered serialization logic internally uses
+         |a large, but fixed, supply of unique wrapper types to box values in
+         |order to control which serialization is used.  Exhausting this supply
+         |means that you happen to have a very complex Scalding job that uses
+         |ordered serialization for a very large number of diverse types""".stripMargin)
   }
 }

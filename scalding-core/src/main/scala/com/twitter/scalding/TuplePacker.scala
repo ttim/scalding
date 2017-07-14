@@ -38,11 +38,11 @@ trait TuplePacker[T] extends java.io.Serializable {
 object TuplePacker extends CaseClassPackers
 
 trait CaseClassPackers extends LowPriorityTuplePackers {
-  implicit def caseClassPacker[T <: Product](implicit mf: Manifest[T]) = new OrderedTuplePacker[T]
+  implicit def caseClassPacker[T <: Product](implicit mf: Manifest[T]): OrderedTuplePacker[T] = new OrderedTuplePacker[T]
 }
 
 trait LowPriorityTuplePackers extends java.io.Serializable {
-  implicit def genericTuplePacker[T: Manifest] = new ReflectionTuplePacker[T]
+  implicit def genericTuplePacker[T: Manifest]: ReflectionTuplePacker[T] = new ReflectionTuplePacker[T]
 }
 
 /**
@@ -64,13 +64,18 @@ class ReflectionTupleConverter[T](fields: Fields)(implicit m: Manifest[T]) exten
   // Cut out "set" and lower case the first after
   def setterToFieldName(setter: Method) = lowerFirst(setter.getName.substring(3))
 
-  def validate {
+  /* The `_.get` is safe because of the `_.isEmpty` check.  ScalaTest does not
+   * seem to support a more type safe way of doing this.
+   */
+  @SuppressWarnings(Array("org.wartremover.warts.OptionPartial"))
+  def validate(): Unit = {
     //We can't touch setters because that shouldn't be accessed until map/reduce side, not
     //on submitter.
     val missing = Dsl.asList(fields).find { f => !getSetters.contains(f.toString) }
+
     assert(missing.isEmpty, "Field: " + missing.get.toString + " not in setters")
   }
-  validate
+  validate()
 
   def getSetters = m.runtimeClass
     .getDeclaredMethods
@@ -84,14 +89,14 @@ class ReflectionTupleConverter[T](fields: Fields)(implicit m: Manifest[T]) exten
   lazy val setters = getSetters
 
   override def apply(input: TupleEntry): T = {
-    val newInst = m.runtimeClass.newInstance()
+    val newInst = m.runtimeClass.newInstance().asInstanceOf[T]
     val fields = input.getFields
     (0 until fields.size).map { idx =>
       val thisField = fields.get(idx)
       val setMethod = setters(thisField.toString)
       setMethod.invoke(newInst, input.getObject(thisField))
     }
-    newInst.asInstanceOf[T]
+    newInst
   }
 }
 

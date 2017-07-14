@@ -21,6 +21,7 @@ import com.twitter.scalding.source.TypedText
 import cascading.pipe.joiner._
 import org.scalatest.{ Matchers, WordSpec }
 import com.twitter.algebird.{ Ring, Group }
+import com.twitter.algebird.field._
 
 import java.io.{ InputStream, OutputStream }
 import scala.util.{ Try, Success }
@@ -310,7 +311,7 @@ class Matrix2Test extends WordSpec with Matchers {
           }
         }
         .runHadoop
-        .finish
+        .finish()
     }
   }
 
@@ -325,7 +326,7 @@ class Matrix2Test extends WordSpec with Matchers {
           }
         }
         .runHadoop
-        .finish
+        .finish()
     }
   }
 
@@ -342,7 +343,7 @@ class Matrix2Test extends WordSpec with Matchers {
           }
         }(implicitly[TypeDescriptor[(Int, Int, (Double, Double, Double))]].converter)
         .runHadoop
-        .finish
+        .finish()
     }
   }
 
@@ -358,7 +359,7 @@ class Matrix2Test extends WordSpec with Matchers {
           }
         }
         .runHadoop
-        .finish
+        .finish()
     }
   }
 
@@ -374,7 +375,7 @@ class Matrix2Test extends WordSpec with Matchers {
           }
         }
         .runHadoop
-        .finish
+        .finish()
     }
   }
 
@@ -388,7 +389,7 @@ class Matrix2Test extends WordSpec with Matchers {
           }
         }
         .runHadoop
-        .finish
+        .finish()
     }
   }
 
@@ -396,14 +397,14 @@ class Matrix2Test extends WordSpec with Matchers {
     TUtil.printStack {
       JobTest(new Matrix2ZeroHad(_))
         .source(Tsv("mat1", ('x1, 'y1, 'v1)), List((1, 1, 1.0), (2, 2, 3.0), (1, 2, 4.0)))
-        .source(Tsv("mat2", ('x2, 'y2, 'v2)), List())
+        .source[(Int, Int, Double)](Tsv("mat2", ('x2, 'y2, 'v2)), List())
         .typedSink(TypedText.tsv[(Int, Int, Double)]("zeroHad")) { ob =>
           "correctly compute a Hadamard product with a zero matrix" in {
             toSparseMat(ob) shouldBe empty
           }
         }
         .runHadoop
-        .finish
+        .finish()
     }
   }
 
@@ -417,7 +418,7 @@ class Matrix2Test extends WordSpec with Matchers {
           }
         }
         .runHadoop
-        .finish
+        .finish()
     }
   }
 
@@ -431,7 +432,7 @@ class Matrix2Test extends WordSpec with Matchers {
           }
         }
         .runHadoop
-        .finish
+        .finish()
     }
   }
 
@@ -446,7 +447,7 @@ class Matrix2Test extends WordSpec with Matchers {
           }
         }
         .runHadoop
-        .finish
+        .finish()
     }
   }
 
@@ -475,7 +476,7 @@ class Matrix2Test extends WordSpec with Matchers {
           }
         }
         .runHadoop
-        .finish
+        .finish()
     }
   }
 
@@ -489,7 +490,7 @@ class Matrix2Test extends WordSpec with Matchers {
           }
         }
         .runHadoop
-        .finish
+        .finish()
     }
   }
 
@@ -510,7 +511,7 @@ class Matrix2Test extends WordSpec with Matchers {
 
         }
         .runHadoop
-        .finish
+        .finish()
     }
   }
 
@@ -549,7 +550,7 @@ class Matrix2Test extends WordSpec with Matchers {
           }
         }
         .runHadoop
-        .finish
+        .finish()
     }
   }
 }

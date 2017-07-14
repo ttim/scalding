@@ -27,7 +27,7 @@ private[typed] object LongIntPacker {
 
 class MutatedSourceJob(args: Args) extends Job(args) {
   import com.twitter.bijection._
-  implicit val bij = new AbstractBijection[Long, (Int, Int)] {
+  implicit val bij: AbstractBijection[Long, (Int, Int)] = new AbstractBijection[Long, (Int, Int)] {
     override def apply(x: Long) = (LongIntPacker.l(x), LongIntPacker.r(x))
     override def invert(y: (Int, Int)) = LongIntPacker.lr(y._1, y._2)
   }
@@ -60,7 +60,7 @@ class MutatedSourceTest extends WordSpec with Matchers {
         }
         .run
         .runHadoop
-        .finish
+        .finish()
     }
   }
 }
@@ -91,7 +91,7 @@ class ContraMappedAndThenSourceTest extends WordSpec with Matchers {
         }
         .run
         .runHadoop
-        .finish
+        .finish()
     }
   }
 }

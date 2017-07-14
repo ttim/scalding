@@ -17,10 +17,12 @@ package com.twitter.scalding
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.mapred.JobConf
+import org.apache.hadoop.mapreduce.MRJobConfig
 import org.apache.hadoop.io.serializer.{ Serialization => HSerialization }
 import com.twitter.chill.{ ExternalizerCodec, ExternalizerInjection, Externalizer, KryoInstantiator }
 import com.twitter.chill.config.{ ScalaMapConfig, ConfiguredInstantiator }
 import com.twitter.bijection.{ Base64String, Injection }
+import com.twitter.scalding.filecache.{CachedFile, DistributedCacheFile, HadoopCachedFile}
 
 import cascading.pipe.assembly.AggregateBy
 import cascading.flow.{ FlowListener, FlowStepListener, FlowProps, FlowStepStrategy }
@@ -28,6 +30,7 @@ import cascading.property.AppProps
 import cascading.tuple.collect.SpillableProps
 
 import java.security.MessageDigest
+import java.net.URI
 
 import scala.collection.JavaConverters._
 import scala.util.{ Failure, Success, Try }
@@ -49,6 +52,27 @@ trait Config extends Serializable {
       case (Some(v), r) => (r, this + (k -> v))
       case (None, r) => (r, this - k)
     }
+
+  /**
+   * Add files to be localized to the config. Intended to be used by user code.
+   * @param cachedFiles CachedFiles to be added
+   * @return new Config with cached files
+   */
+  def addDistributedCacheFiles(cachedFiles: CachedFile*): Config =
+    cachedFiles.foldLeft(this) { case (config, file) =>
+        file match {
+          case hadoopFile: HadoopCachedFile =>
+            Config.addDistributedCacheFile(hadoopFile.sourceUri, config)
+          case _ => config
+        }
+    }
+
+  /**
+   * Get cached files from config
+   */
+  def getDistributedCachedFiles: Seq[CachedFile] = {
+    Config.getDistributedCacheFile(this)
+  }
 
   /**
    * This is a name that if present is passed to flow.setName,
@@ -198,13 +222,19 @@ trait Config extends Serializable {
     if (toMap.contains(ConfiguredInstantiator.KEY)) Some((new ConfiguredInstantiator(ScalaMapConfig(toMap))).getDelegate)
     else None
 
-  def getArgs: Args = get(Config.ScaldingJobArgs) match {
+  def getArgs: Args = get(Config.ScaldingJobArgsSerialized) match {
     case None => new Args(Map.empty)
-    case Some(str) => Args(str)
+    case Some(str) => argsSerializer
+      .invert(str)
+      .map(new Args(_))
+      .getOrElse(throw new RuntimeException(
+        s"""Could not deserialize Args from Config. Maybe "$ScaldingJobArgsSerialized" was modified without using Config.setArgs?"""))
   }
 
   def setArgs(args: Args): Config =
-    this + (Config.ScaldingJobArgs -> args.toString)
+    this
+      .+(Config.ScaldingJobArgs -> args.toString)
+      .+(Config.ScaldingJobArgsSerialized -> argsSerializer(args.m))
 
   def setDefaultComparator(clazz: Class[_ <: java.util.Comparator[_]]): Config =
     this + (FlowProps.DEFAULT_ELEMENT_COMPARATOR -> clazz.getName)
@@ -213,7 +243,7 @@ trait Config extends Serializable {
   def setScaldingVersion: Config =
     (this.+(Config.ScaldingVersion -> scaldingVersion)).+(
       // This is setting a property for cascading/driven
-      (AppProps.APP_FRAMEWORKS -> ("scalding:" + scaldingVersion.toString)))
+      (AppProps.APP_FRAMEWORKS -> ("scalding:" + scaldingVersion)))
 
   def getUniqueIds: Set[UniqueID] =
     get(UniqueID.UNIQUE_JOB_ID)
@@ -313,10 +343,9 @@ trait Config extends Serializable {
 
   def getFlowListeners: List[Try[(Mode, Config) => FlowListener]] =
     get(Config.FlowListeners)
-      .toIterable
+      .toList
       .flatMap(s => StringUtility.fastSplit(s, ","))
       .map(flowListenerSerializer.invert(_))
-      .toList
 
   def addFlowStepListener(flowListenerProvider: (Mode, Config) => FlowStepListener): Config = {
     val serializedListener = flowStepListenerSerializer(flowListenerProvider)
@@ -328,10 +357,9 @@ trait Config extends Serializable {
 
   def getFlowStepListeners: List[Try[(Mode, Config) => FlowStepListener]] =
     get(Config.FlowStepListeners)
-      .toIterable
+      .toList
       .flatMap(s => StringUtility.fastSplit(s, ","))
       .map(flowStepListenerSerializer.invert(_))
-      .toList
 
   def addFlowStepStrategy(flowStrategyProvider: (Mode, Config) => FlowStepStrategy[JobConf]): Config = {
     val serializedListener = flowStepStrategiesSerializer(flowStrategyProvider)
@@ -346,10 +374,9 @@ trait Config extends Serializable {
 
   def getFlowStepStrategies: List[Try[(Mode, Config) => FlowStepStrategy[JobConf]]] =
     get(Config.FlowStepStrategies)
-      .toIterable
+      .toList
       .flatMap(s => StringUtility.fastSplit(s, ","))
       .map(flowStepStrategiesSerializer.invert(_))
-      .toList
 
   /** Get the number of reducers (this is the parameter Hadoop will use) */
   def getNumReducers: Option[Int] = get(Config.HadoopNumReducers).map(_.toInt)
@@ -358,6 +385,22 @@ trait Config extends Serializable {
   /** Set username from System.used for querying hRaven. */
   def setHRavenHistoryUserName: Config =
     this + (Config.HRavenHistoryUserName -> System.getProperty("user.name"))
+
+  def setHashJoinAutoForceRight(b: Boolean): Config =
+    this + (HashJoinAutoForceRight -> (b.toString))
+
+  def getHashJoinAutoForceRight: Boolean =
+    get(HashJoinAutoForceRight)
+      .map(_.toBoolean)
+      .getOrElse(false)
+
+  /**
+   * Set to true to enable very verbose logging during FileSource's validation and planning.
+   * This can help record what files were present / missing at runtime. Should only be enabled
+   * for debugging.
+   */
+  def setVerboseFileSourceLogging(b: Boolean): Config =
+    this + (VerboseFileSourceLoggingKey -> b.toString)
 
   override def hashCode = toMap.hashCode
   override def equals(that: Any) = that match {
@@ -376,12 +419,14 @@ object Config {
   val ScaldingFlowSubmittedTimestamp: String = "scalding.flow.submitted.timestamp"
   val ScaldingExecutionId: String = "scalding.execution.uuid"
   val ScaldingJobArgs: String = "scalding.job.args"
+  val ScaldingJobArgsSerialized: String = "scalding.job.argsserialized"
   val ScaldingVersion: String = "scalding.version"
   val HRavenHistoryUserName: String = "hraven.history.user.name"
   val ScaldingRequireOrderedSerialization: String = "scalding.require.orderedserialization"
   val FlowListeners: String = "scalding.observability.flowlisteners"
   val FlowStepListeners: String = "scalding.observability.flowsteplisteners"
   val FlowStepStrategies: String = "scalding.strategies.flowstepstrategies"
+  val VerboseFileSourceLoggingKey = "scalding.filesource.verbose.logging"
 
   /**
    * Parameter that actually controls the number of reduce tasks.
@@ -401,6 +446,14 @@ object Config {
   /** Manual description for use in .dot and MR step names set using a `withDescription`. */
   val PipeDescriptions = "scalding.pipe.descriptions"
   val StepDescriptions = "scalding.step.descriptions"
+
+  /**
+   * Parameter that can be used to determine behavior on the rhs of a hashJoin.
+   * If true, we try to guess when to auto force to disk before a hashJoin
+   * else (the default) we don't try to infer this and the behavior can be dictated by the user manually
+   * calling forceToDisk on the rhs or not as they wish.
+   */
+  val HashJoinAutoForceRight: String = "scalding.hashjoin.autoforceright"
 
   val empty: Config = Config(Map.empty)
 
@@ -482,7 +535,7 @@ object Config {
    * Either union these two, or return the keys that overlap
    */
   def disjointUnion[K >: String, V >: String](m: Map[K, V], conf: Config): Either[Set[String], Map[K, V]] = {
-    val asMap = conf.toMap.toMap[K, V]
+    val asMap = conf.toMap.toMap[K, V] // linter:ignore we are upcasting K, V
     val duplicateKeys = (m.keySet & asMap.keySet)
     if (duplicateKeys.isEmpty) Right(m ++ asMap)
     else Left(conf.toMap.keySet.filter(duplicateKeys(_))) // make sure to return Set[String], and not cast
@@ -491,7 +544,7 @@ object Config {
    * This overwrites any keys in m that exist in config.
    */
   def overwrite[K >: String, V >: String](m: Map[K, V], conf: Config): Map[K, V] =
-    m ++ (conf.toMap.toMap[K, V])
+    m ++ (conf.toMap.toMap[K, V]) // linter:ignore we are upcasting K, V
 
   /*
    * Note that Hadoop Configuration is mutable, but Config is not. So a COPY is
@@ -539,10 +592,52 @@ object Config {
     md5Hex(bytes)
   }
 
+  /**
+   * Add a file to be localized to the config. Intended to be used by user code.
+   *
+   * @param qualifiedURI The qualified uri of the cache to be localized
+   * @param config Config to add the cache to
+   *
+   * @return new Config with cached files
+   *
+   * @see basic logic from [[org.apache.hadoop.mapreduce.filecache.DistributedCache.addCacheFile]]
+   */
+  private def addDistributedCacheFile(qualifiedURI: URI, config: Config): Config = {
+    val newFile = DistributedCacheFile
+      .symlinkedUriFor(qualifiedURI)
+      .toString
+
+    val newFiles = config
+      .get(MRJobConfig.CACHE_FILES)
+      .map(files => files + "," + newFile)
+      .getOrElse(newFile)
+
+    config + (MRJobConfig.CACHE_FILES -> newFiles)
+  }
+
+  /**
+   * Get distributed cache files from config
+   *
+   * @param config Config with cached files
+   */
+  private def getDistributedCacheFile(config: Config): Seq[CachedFile] = {
+    config
+      .get(MRJobConfig.CACHE_FILES)
+      .toSeq
+      .flatMap(_.split(","))
+      .filter(_.nonEmpty)
+      .map { file =>
+        val symlinkedUri = new URI(file)
+        val qualifiedUri = new URI(symlinkedUri.getScheme, symlinkedUri.getSchemeSpecificPart, null)
+        HadoopCachedFile(qualifiedUri)
+      }
+  }
+
   private[this] def buildInj[T: ExternalizerInjection: ExternalizerCodec]: Injection[T, String] =
     Injection.connect[T, Externalizer[T], Array[Byte], Base64String, String]
 
   @transient private[scalding] lazy val flowStepListenerSerializer = buildInj[(Mode, Config) => FlowStepListener]
   @transient private[scalding] lazy val flowListenerSerializer = buildInj[(Mode, Config) => FlowListener]
   @transient private[scalding] lazy val flowStepStrategiesSerializer = buildInj[(Mode, Config) => FlowStepStrategy[JobConf]]
+  @transient private[scalding] lazy val argsSerializer = buildInj[Map[String, List[String]]]
 }

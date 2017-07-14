@@ -64,7 +64,10 @@ object ExecutionApp {
           (hadoopArgs, nonHadoop, Some(current))
       }
     // We can have something left in the last bucket, so extract it.
-    val nonHadoop = if (finalLast.isDefined) tmpNonHadoop :+ finalLast.get else tmpNonHadoop
+    val nonHadoop = finalLast match {
+      case Some(x) => tmpNonHadoop :+ x
+      case None => tmpNonHadoop
+    }
 
     // Throwaway hadoop config
     // see which of our hadoop config args are not ones
@@ -107,7 +110,7 @@ trait ExecutionApp extends java.io.Serializable {
     (config, mode)
   }
 
-  def main(args: Array[String]) {
+  def main(args: Array[String]): Unit = {
     config(args) match {
       case (conf, mode) => job.waitFor(conf, mode).get
     }

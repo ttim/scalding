@@ -31,10 +31,10 @@ object ErrorHistoryService extends HistoryService {
 object HistoryServiceWithData {
 
   // we only care about these two input size fields for RatioBasedEstimator
-  def makeHistory(inputHdfsBytesRead: Long, inputHdfsReduceFileBytesRead: Long): FlowStepHistory =
-    makeHistory(inputHdfsBytesRead, inputHdfsReduceFileBytesRead, Seq())
+  def makeHistory(inputHdfsBytesRead: Long, mapOutputBytes: Long): FlowStepHistory =
+    makeHistory(inputHdfsBytesRead, mapOutputBytes, Seq())
 
-  def makeHistory(inputHdfsBytesRead: Long, inputHdfsReduceFileBytesRead: Long, taskRuntimes: Seq[Long]): FlowStepHistory = {
+  def makeHistory(inputHdfsBytesRead: Long, mapOutputBytes: Long, taskRuntimes: Seq[Long]): FlowStepHistory = {
     val random = new scala.util.Random(123)
     val tasks = taskRuntimes.map { time =>
       val startTime = random.nextLong
@@ -58,7 +58,8 @@ object HistoryServiceWithData {
       failedReduces = 0L,
       mapFileBytesRead = 0L,
       mapFileBytesWritten = 0L,
-      reduceFileBytesRead = inputHdfsReduceFileBytesRead,
+      mapOutputBytes = mapOutputBytes,
+      reduceFileBytesRead = 0l,
       hdfsBytesRead = inputHdfsBytesRead,
       hdfsBytesWritten = 0L,
       mapperTimeMillis = 0L,
@@ -86,6 +87,22 @@ object ValidHistoryService extends HistoryServiceWithData {
         makeHistory(inputSize, inputSize / 2)))
 }
 
+object SmallDataExplosionHistoryService extends HistoryServiceWithData {
+  import HistoryServiceWithData._
+
+  def fetchHistory(info: FlowStrategyInfo, maxHistory: Int): Try[Seq[FlowStepHistory]] = {
+    // huge ratio, but data is still small overall
+
+    val outSize = inputSize * 1000
+
+    Success(
+      Seq(
+        makeHistory(inputSize, outSize),
+        makeHistory(inputSize, outSize),
+        makeHistory(inputSize, outSize)))
+  }
+}
+
 object InvalidHistoryService extends HistoryServiceWithData {
   import HistoryServiceWithData._
 
@@ -110,6 +127,10 @@ class ValidHistoryBasedEstimator extends RatioBasedEstimator {
   override val historyService = ValidHistoryService
 }
 
+class SmallDataExplosionHistoryBasedEstimator extends RatioBasedEstimator {
+  override val historyService = SmallDataExplosionHistoryService
+}
+
 class InvalidHistoryBasedEstimator extends RatioBasedEstimator {
   override val historyService = InvalidHistoryService
 }
@@ -131,7 +152,7 @@ class RatioBasedReducerEstimatorTest extends WordSpec with Matchers with HadoopS
           val conf = steps.head.getConfig
           conf.getNumReduceTasks should equal (1) // default
         }
-        .run
+        .run()
     }
 
     "not set reducers when error fetching history" in {
@@ -147,7 +168,7 @@ class RatioBasedReducerEstimatorTest extends WordSpec with Matchers with HadoopS
           val conf = steps.head.getConfig
           conf.getNumReduceTasks should equal (1) // default
         }
-        .run
+        .run()
     }
 
     "set reducers correctly when there is valid history" in {
@@ -167,7 +188,34 @@ class RatioBasedReducerEstimatorTest extends WordSpec with Matchers with HadoopS
           val conf = steps.head.getConfig
           conf.getNumReduceTasks should equal (2)
         }
-        .run
+        .run()
+    }
+
+    /*
+     * If the InputSizeReducerEstimator decides that less than 1 reducer is necessary, it
+     * rounds up to 1. If the RatioBasedEstimator relies on this, it will use the rounded-up
+     * value to calculate the number of reducers. In the case of data explosion on a small dataset,
+     * you end up with a very large number of reducers because this rounding error is multiplied.
+     * This regression test ensures that this is no longer the case.
+     *
+     * see https://github.com/twitter/scalding/issues/1541 for more details.
+     */
+    "handle mapper output explosion over small data correctly" in {
+      val customConfig = Config.empty
+        .addReducerEstimator(classOf[SmallDataExplosionHistoryBasedEstimator]) +
+        // set the bytes per reducer to to 500x input size, so that we estimate needing 2 reducers,
+        // even though there's a very large explosion in input data size, the data is still pretty small
+        (InputSizeReducerEstimator.BytesPerReducer -> (HistoryServiceWithData.inputSize * 500).toString) +
+        (RatioBasedEstimator.inputRatioThresholdKey -> 0.10f.toString)
+
+      HadoopPlatformJobTest(new SimpleJobWithNoSetReducers(_, customConfig), cluster)
+        .inspectCompletedFlow { flow =>
+          val steps = flow.getFlowSteps.asScala
+          steps should have size 1
+
+          val conf = steps.head.getConfig
+          conf.getNumReduceTasks should equal (2) // used to pick 1000 with the rounding error
+        }.run()
     }
 
     "not set reducers when there is no valid history" in {
@@ -183,7 +231,7 @@ class RatioBasedReducerEstimatorTest extends WordSpec with Matchers with HadoopS
           val conf = steps.head.getConfig
           conf.getNumReduceTasks should equal (1) // default
         }
-        .run
+        .run()
     }
   }
 }

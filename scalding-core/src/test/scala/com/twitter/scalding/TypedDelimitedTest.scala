@@ -53,9 +53,9 @@ class TypedOsvJob(args: Args) extends Job(args) {
 object DailySuffixTypedTsvJob {
   val strd1 = "2014-05-01"
   val strd2 = "2014-05-02"
-  implicit val tz = DateOps.UTC
-  implicit val parser = DateParser.default
-  implicit val dr1 = DateRange(RichDate(strd1), RichDate(strd2))
+  implicit val tz: java.util.TimeZone = DateOps.UTC
+  implicit val parser: DateParser = DateParser.default
+  implicit val dr1: DateRange = DateRange(RichDate(strd1), RichDate(strd2))
 
   def source(str: String) = DailySuffixTypedTsv[(String, Int)](str)
 
@@ -83,7 +83,7 @@ class TypedDelimitedTest extends WordSpec with Matchers {
         }
       }
       .run
-      .finish
+      .finish()
   }
 
   "A TypedCsv Source" should {
@@ -95,7 +95,7 @@ class TypedDelimitedTest extends WordSpec with Matchers {
         }
       }
       .run
-      .finish
+      .finish()
   }
 
   "A TypedPsv Source" should {
@@ -107,7 +107,7 @@ class TypedDelimitedTest extends WordSpec with Matchers {
         }
       }
       .run
-      .finish
+      .finish()
   }
 
   "A TypedOsv Source" should {
@@ -119,7 +119,7 @@ class TypedDelimitedTest extends WordSpec with Matchers {
         }
       }
       .run
-      .finish
+      .finish()
   }
 
   "A DailySuffixTypedTsv Source" should {
@@ -133,6 +133,6 @@ class TypedDelimitedTest extends WordSpec with Matchers {
         }
       }
       .run
-      .finish
+      .finish()
   }
 }

@@ -15,6 +15,10 @@ limitations under the License.
 */
 package com.twitter.scalding
 
+import com.twitter.scalding.filecache.{ HadoopCachedFile, URIHasher }
+import java.net.URI
+import org.apache.hadoop.mapreduce.MRJobConfig
+
 import org.scalatest.{ WordSpec, Matchers }
 import org.scalacheck.Arbitrary
 import org.scalacheck.Properties
@@ -50,6 +54,16 @@ class ConfigTest extends WordSpec with Matchers {
       val (id, conf) = Config.empty.ensureUniqueId
       assert(conf.getUniqueIds === (Set(id)))
     }
+    "roundtrip Args" in {
+      val config = Config.empty
+      val args = Args(Array("--hello", "party people"))
+
+      assert(config.setArgs(args).getArgs === args)
+    }
+    "throw when Args has been manually modified" in {
+      val config = Config.empty + (Config.ScaldingJobArgsSerialized -> "  ")
+      intercept[RuntimeException](config.getArgs)
+    }
     "Default serialization should have tokens" in {
       Config.default.getCascadingSerializationTokens should not be empty
       Config.default.getCascadingSerializationTokens
@@ -59,7 +73,7 @@ class ConfigTest extends WordSpec with Matchers {
 
       Config.empty.getCascadingSerializationTokens shouldBe empty
 
-      // tokenClasses are a subset that don't include primites or arrays.
+      // tokenClasses are a subset that don't include primitives or arrays.
       val tokenClasses = Config.default.getCascadingSerializationTokens.values.toSet
       val kryoClasses = Config.default.getKryoRegisteredClasses.map(_.getName)
       // Tokens are a subset of Kryo registered classes
@@ -68,12 +82,47 @@ class ConfigTest extends WordSpec with Matchers {
       (kryoClasses -- tokenClasses).forall { c =>
         // primitives cannot be forName'd
         val prim = Set(classOf[Boolean], classOf[Byte], classOf[Short],
-          classOf[Int], classOf[Long], classOf[Float], classOf[Double], classOf[Char])
+          classOf[Int], classOf[Long], classOf[Float], classOf[Double], classOf[Char], classOf[Unit])
           .map(_.getName)
 
         prim(c) || Class.forName(c).isArray
       } shouldBe true
     }
+    "addDistributedCacheFile works" in {
+      val (cachedFile, path) = ConfigTest.makeCachedFileAndPath("test.txt")
+
+      Config
+        .empty
+        .addDistributedCacheFiles(cachedFile)
+        .get(MRJobConfig.CACHE_FILES) shouldBe Some(path)
+    }
+    "multiple addDistributedCacheFile work" in {
+      val (cachedFileFirst, pathFirst) = ConfigTest.makeCachedFileAndPath("first.txt")
+      val (cachedFileSecond, pathSecond) = ConfigTest.makeCachedFileAndPath("second.txt")
+
+      Config
+        .empty
+        .addDistributedCacheFiles(cachedFileFirst, cachedFileSecond)
+        .get(MRJobConfig.CACHE_FILES) shouldBe Some(s"$pathFirst,$pathSecond")
+
+      Config
+        .empty
+        .addDistributedCacheFiles(cachedFileFirst)
+        .addDistributedCacheFiles(cachedFileSecond)
+        .get(MRJobConfig.CACHE_FILES) shouldBe Some(s"$pathFirst,$pathSecond")
+    }
+  }
+}
+
+object ConfigTest {
+  def makeCachedFileAndPath(name: String): (HadoopCachedFile, String) = {
+    val uriString = s"hdfs://foo.example:1234/path/to/the/stuff/$name"
+    val uri = new URI(uriString)
+    val hashHex = URIHasher(uri)
+    val hashedFilename = hashHex + s"-$name"
+    val cachedFile = HadoopCachedFile(uri)
+
+    (cachedFile, s"$uriString#$hashedFilename")
   }
 }
 

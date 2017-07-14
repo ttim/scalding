@@ -23,7 +23,7 @@ import com.twitter.scalding.serialization.{ JavaStreamEnrichments, Law, Law1, La
 import org.scalacheck.Arbitrary.{ arbitrary => arb }
 import org.scalacheck.{ Arbitrary, Gen, Prop }
 import org.scalatest.prop.{ Checkers, PropertyChecks }
-import org.scalatest.{ FunSuite, ShouldMatchers }
+import org.scalatest.{ FunSuite, Matchers }
 
 import scala.collection.immutable.Queue
 import scala.language.experimental.macros
@@ -81,6 +81,12 @@ object TestCC {
     } yield TestCaseClassD(aInt)
   }
 
+  implicit def arbitraryTestEE: Arbitrary[TestCaseClassE] = Arbitrary {
+    for {
+      aString <- arb[String]
+    } yield TestCaseClassE(aString)
+  }
+
   implicit def arbitraryTestObjectE: Arbitrary[TestObjectE.type] = Arbitrary {
     for {
       e <- Gen.const(TestObjectE)
@@ -95,7 +101,19 @@ object TestCC {
       t <- Gen.oneOf(cc, bb, dd, TestObjectE)
     } yield t
   }
+
+  implicit def arbitraryTestSealedAbstractClass: Arbitrary[TestSealedAbstractClass] = Arbitrary {
+    for {
+      testSealedAbstractClass <- Gen.oneOf(A, B)
+    } yield testSealedAbstractClass
+  }
+
 }
+
+sealed abstract class TestSealedAbstractClass(val name: Option[String])
+case object A extends TestSealedAbstractClass(None)
+case object B extends TestSealedAbstractClass(Some("b"))
+
 sealed trait SealedTraitTest
 case class TestCC(a: Int, b: Long, c: Option[Int], d: Double, e: Option[String], f: Option[List[String]], aBB: ByteBuffer) extends SealedTraitTest
 
@@ -103,7 +121,11 @@ case class TestCaseClassB(a: Int, b: Long, c: Option[Int], d: Double, e: Option[
 
 case class TestCaseClassD(a: Int) extends SealedTraitTest
 
+case class TestCaseClassE(a: String) extends AnyVal
+
 case object TestObjectE extends SealedTraitTest
+
+case class TypedParameterCaseClass[A](v: A)
 
 object MyData {
   implicit def arbitraryTestCC: Arbitrary[MyData] = Arbitrary {
@@ -180,7 +202,7 @@ object Container {
   type SetAlias = Set[Double]
   case class InnerCaseClass(e: SetAlias)
 }
-class MacroOrderingProperties extends FunSuite with PropertyChecks with ShouldMatchers with LowerPriorityImplicit {
+class MacroOrderingProperties extends FunSuite with PropertyChecks with Matchers with LowerPriorityImplicit {
   type SetAlias = Set[Double]
 
   import ByteBufferArb._
@@ -239,7 +261,7 @@ class MacroOrderingProperties extends FunSuite with PropertyChecks with ShouldMa
     checkManyExplicit(i)
   }
 
-  def checkWithInputs[T](a: T, b: T)(implicit obuf: OrderedSerialization[T]) {
+  def checkWithInputs[T](a: T, b: T)(implicit obuf: OrderedSerialization[T]): Unit = {
     val rta = rt(a) // before we do anything ensure these don't throw
     val rtb = rt(b) // before we do anything ensure these don't throw
     val asize = Serialization.toBytes(a).length
@@ -257,7 +279,7 @@ class MacroOrderingProperties extends FunSuite with PropertyChecks with ShouldMa
     assert(oBufCompare(rta, rtb) === oBufCompare(a, b), "Comparing a and b with ordered bufferables compare after a serialization RT")
   }
 
-  def checkAreSame[T](a: T, b: T)(implicit obuf: OrderedSerialization[T]) {
+  def checkAreSame[T](a: T, b: T)(implicit obuf: OrderedSerialization[T]): Unit = {
     val rta = rt(a) // before we do anything ensure these don't throw
     val rtb = rt(b) // before we do anything ensure these don't throw
     assert(oBufCompare(rta, a) === 0, s"A should be equal to itself after an RT -- ${rt(a)}")
@@ -294,24 +316,24 @@ class MacroOrderingProperties extends FunSuite with PropertyChecks with ShouldMa
     check[Boolean]
   }
   test("Test out jl.Boolean") {
-    implicit val a = arbMap { b: Boolean => java.lang.Boolean.valueOf(b) }
+    implicit val a: Arbitrary[java.lang.Boolean] = arbMap { b: Boolean => java.lang.Boolean.valueOf(b) }
     check[java.lang.Boolean]
   }
   test("Test out Byte") { check[Byte] }
   test("Test out jl.Byte") {
-    implicit val a = arbMap { b: Byte => java.lang.Byte.valueOf(b) }
+    implicit val a: Arbitrary[java.lang.Byte] = arbMap { b: Byte => java.lang.Byte.valueOf(b) }
     check[java.lang.Byte]
     checkCollisions[java.lang.Byte]
   }
   test("Test out Short") { check[Short] }
   test("Test out jl.Short") {
-    implicit val a = arbMap { b: Short => java.lang.Short.valueOf(b) }
+    implicit val a: Arbitrary[java.lang.Short] = arbMap { b: Short => java.lang.Short.valueOf(b) }
     check[java.lang.Short]
     checkCollisions[java.lang.Short]
   }
   test("Test out Char") { check[Char] }
   test("Test out jl.Char") {
-    implicit val a = arbMap { b: Char => java.lang.Character.valueOf(b) }
+    implicit val a: Arbitrary[java.lang.Character] = arbMap { b: Char => java.lang.Character.valueOf(b) }
     check[java.lang.Character]
     checkCollisions[java.lang.Character]
   }
@@ -321,27 +343,51 @@ class MacroOrderingProperties extends FunSuite with PropertyChecks with ShouldMa
     checkMany[Int]
     checkCollisions[Int]
   }
+
+  test("Test out AnyVal of String") {
+    import TestCC._
+    check[TestCaseClassE]
+    checkMany[TestCaseClassE]
+    checkCollisions[TestCaseClassE]
+  }
+
+  test("Test out Tuple of AnyVal's of String") {
+    import TestCC._
+    primitiveOrderedBufferSupplier[(TestCaseClassE, TestCaseClassE)]
+    check[(TestCaseClassE, TestCaseClassE)]
+    checkMany[(TestCaseClassE, TestCaseClassE)]
+    checkCollisions[(TestCaseClassE, TestCaseClassE)]
+  }
+
+  test("Test out Tuple of TestSealedAbstractClass") {
+    import TestCC._
+    primitiveOrderedBufferSupplier[TestSealedAbstractClass]
+    check[TestSealedAbstractClass]
+    checkMany[TestSealedAbstractClass]
+    checkCollisions[TestSealedAbstractClass]
+  }
+
   test("Test out jl.Integer") {
-    implicit val a = arbMap { b: Int => java.lang.Integer.valueOf(b) }
+    implicit val a: Arbitrary[java.lang.Integer] = arbMap { b: Int => java.lang.Integer.valueOf(b) }
     check[java.lang.Integer]
     checkCollisions[java.lang.Integer]
 
   }
   test("Test out Float") { check[Float] }
   test("Test out jl.Float") {
-    implicit val a = arbMap { b: Float => java.lang.Float.valueOf(b) }
+    implicit val a: Arbitrary[java.lang.Float] = arbMap { b: Float => java.lang.Float.valueOf(b) }
     check[java.lang.Float]
     checkCollisions[java.lang.Float]
   }
   test("Test out Long") { check[Long] }
   test("Test out jl.Long") {
-    implicit val a = arbMap { b: Long => java.lang.Long.valueOf(b) }
+    implicit val a: Arbitrary[java.lang.Long] = arbMap { b: Long => java.lang.Long.valueOf(b) }
     check[java.lang.Long]
     checkCollisions[java.lang.Long]
   }
   test("Test out Double") { check[Double] }
   test("Test out jl.Double") {
-    implicit val a = arbMap { b: Double => java.lang.Double.valueOf(b) }
+    implicit val a: Arbitrary[java.lang.Double] = arbMap { b: Double => java.lang.Double.valueOf(b) }
     check[java.lang.Double]
     checkCollisions[java.lang.Double]
   }
@@ -366,27 +412,27 @@ class MacroOrderingProperties extends FunSuite with PropertyChecks with ShouldMa
     checkCollisions[List[Float]]
   }
   test("Test out Queue[Int]") {
-    implicit val isa = collectionArb[Queue, Int]
+    implicit val isa: Arbitrary[Queue[Int]] = collectionArb[Queue, Int]
     primitiveOrderedBufferSupplier[Queue[Int]]
     check[Queue[Int]]
     checkCollisions[Queue[Int]]
   }
   test("Test out IndexedSeq[Int]") {
-    implicit val isa = collectionArb[IndexedSeq, Int]
+    implicit val isa: Arbitrary[IndexedSeq[Int]] = collectionArb[IndexedSeq, Int]
     primitiveOrderedBufferSupplier[IndexedSeq[Int]]
     check[IndexedSeq[Int]]
     checkCollisions[IndexedSeq[Int]]
   }
   test("Test out HashSet[Int]") {
     import scala.collection.immutable.HashSet
-    implicit val isa = collectionArb[HashSet, Int]
+    implicit val isa: Arbitrary[HashSet[Int]] = collectionArb[HashSet, Int]
     primitiveOrderedBufferSupplier[HashSet[Int]]
     check[HashSet[Int]]
     checkCollisions[HashSet[Int]]
   }
   test("Test out ListSet[Int]") {
     import scala.collection.immutable.ListSet
-    implicit val isa = collectionArb[ListSet, Int]
+    implicit val isa: Arbitrary[ListSet[Int]] = collectionArb[ListSet, Int]
     primitiveOrderedBufferSupplier[ListSet[Int]]
     check[ListSet[Int]]
     checkCollisions[ListSet[Int]]
@@ -480,14 +526,14 @@ class MacroOrderingProperties extends FunSuite with PropertyChecks with ShouldMa
   }
   test("Test out HashMap[Long, Long]") {
     import scala.collection.immutable.HashMap
-    implicit val isa = Arbitrary(implicitly[Arbitrary[List[(Long, Long)]]].arbitrary.map(HashMap(_: _*)))
+    implicit val isa: Arbitrary[HashMap[Long, Long]] = Arbitrary(implicitly[Arbitrary[List[(Long, Long)]]].arbitrary.map(HashMap(_: _*)))
     primitiveOrderedBufferSupplier[HashMap[Long, Long]]
     check[HashMap[Long, Long]]
     checkCollisions[HashMap[Long, Long]]
   }
   test("Test out ListMap[Long, Long]") {
     import scala.collection.immutable.ListMap
-    implicit val isa = Arbitrary(implicitly[Arbitrary[List[(Long, Long)]]].arbitrary.map(ListMap(_: _*)))
+    implicit val isa: Arbitrary[ListMap[Long, Long]] = Arbitrary(implicitly[Arbitrary[List[(Long, Long)]]].arbitrary.map(ListMap(_: _*)))
     primitiveOrderedBufferSupplier[ListMap[Long, Long]]
     check[ListMap[Long, Long]]
     checkCollisions[ListMap[Long, Long]]
@@ -657,6 +703,15 @@ class MacroOrderingProperties extends FunSuite with PropertyChecks with ShouldMa
     checkCollisions[Option[MacroOpaqueContainer]]
     check[List[MacroOpaqueContainer]]
     checkCollisions[List[MacroOpaqueContainer]]
+  }
+
+  def fn[A](implicit or: OrderedSerialization[A]): OrderedSerialization[TypedParameterCaseClass[A]] = {
+    primitiveOrderedBufferSupplier[TypedParameterCaseClass[A]]
+  }
+
+  test("Test out MacroOpaqueContainer inside a case class as an abstract type") {
+    fn[MacroOpaqueContainer]
+    primitiveOrderedBufferSupplier[(MacroOpaqueContainer, MacroOpaqueContainer)]
   }
 }
 

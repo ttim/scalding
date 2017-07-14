@@ -28,6 +28,8 @@ import cascading.tuple.{ Fields, Tuple => CTuple, TupleEntry, TupleEntryCollecto
 
 import cascading.pipe.Pipe
 
+import org.apache.hadoop.mapred.InputFormat
+import org.apache.hadoop.mapred.InputSplit
 import org.apache.hadoop.mapred.JobConf
 import org.apache.hadoop.mapred.OutputCollector
 import org.apache.hadoop.mapred.RecordReader
@@ -37,7 +39,9 @@ import scala.collection.JavaConverters._
 /**
  * thrown when validateTaps fails
  */
-class InvalidSourceException(message: String) extends RuntimeException(message)
+class InvalidSourceException(message: String, cause: Throwable) extends RuntimeException(message, cause) {
+  def this(message: String) = this(message, null)
+}
 
 /**
  * InvalidSourceTap used in createTap method when we want to defer
@@ -49,7 +53,10 @@ class InvalidSourceException(message: String) extends RuntimeException(message)
  *
  * hdfsPaths represents user-supplied list that was detected as not containing any valid paths.
  */
-class InvalidSourceTap(val hdfsPaths: Iterable[String]) extends SourceTap[JobConf, RecordReader[_, _]] {
+class InvalidSourceTap(val e: Throwable) extends SourceTap[JobConf, RecordReader[_, _]] {
+
+  def this(hdfsPaths: Iterable[String]) =
+    this(new InvalidSourceException(s"No good paths in $hdfsPaths"))
 
   private final val randomId = UUID.randomUUID.toString
 
@@ -59,8 +66,7 @@ class InvalidSourceTap(val hdfsPaths: Iterable[String]) extends SourceTap[JobCon
 
   override def getModifiedTime(conf: JobConf): Long = 0L
 
-  override def openForRead(flow: FlowProcess[JobConf], input: RecordReader[_, _]): TupleEntryIterator =
-    throw new InvalidSourceException(s"InvalidSourceTap: No good paths in $hdfsPaths")
+  override def openForRead(flow: FlowProcess[JobConf], input: RecordReader[_, _]): TupleEntryIterator = throw new InvalidSourceException("Encountered InvalidSourceTap!", e)
 
   override def resourceExists(conf: JobConf): Boolean = false
 
@@ -76,9 +82,20 @@ class InvalidSourceTap(val hdfsPaths: Iterable[String]) extends SourceTap[JobCon
   // In the worst case if the flow plan is misconfigured,
   // openForRead on mappers should fail when using this tap.
   override def sourceConfInit(flow: FlowProcess[JobConf], conf: JobConf): Unit = {
-    conf.setInputFormat(classOf[cascading.tap.hadoop.io.MultiInputFormat])
+    conf.setInputFormat(classOf[InvalidInputFormat])
     super.sourceConfInit(flow, conf)
   }
+}
+
+/**
+ * Better error messaging for the occassion where an InvalidSourceTap does not
+ * fail in validation.
+ */
+private[scalding] class InvalidInputFormat extends InputFormat[Nothing, Nothing] {
+  override def getSplits(conf: JobConf, numSplits: Int): Nothing =
+    throw new InvalidSourceException("getSplits called on InvalidInputFormat")
+  override def getRecordReader(split: InputSplit, conf: JobConf, reporter: org.apache.hadoop.mapred.Reporter): Nothing =
+    throw new InvalidSourceException("getRecordReader called on InvalidInputFormat")
 }
 
 /*
@@ -131,7 +148,7 @@ abstract class Source extends java.io.Serializable {
   def sourceId: String = toString
 
   def read(implicit flowDef: FlowDef, mode: Mode): Pipe = {
-    checkFlowDefNotNull
+    checkFlowDefNotNull()
 
     //workaround for a type erasure problem, this is a map of String -> Tap[_,_,_]
     val sources = flowDef.getSources().asInstanceOf[JMap[String, Any]]
@@ -157,7 +174,7 @@ abstract class Source extends java.io.Serializable {
    * the next operation
    */
   def writeFrom(pipe: Pipe)(implicit flowDef: FlowDef, mode: Mode): Pipe = {
-    checkFlowDefNotNull
+    checkFlowDefNotNull()
 
     //insane workaround for scala compiler bug
     val sinks = flowDef.getSinks.asInstanceOf[JMap[String, Any]]
@@ -174,7 +191,7 @@ abstract class Source extends java.io.Serializable {
     pipe
   }
 
-  protected def checkFlowDefNotNull(implicit flowDef: FlowDef, mode: Mode) {
+  protected def checkFlowDefNotNull()(implicit flowDef: FlowDef, mode: Mode): Unit = {
     assert(flowDef != null, "Trying to access null FlowDef while in mode: %s".format(mode))
   }
 
@@ -189,7 +206,7 @@ abstract class Source extends java.io.Serializable {
   /*
    * This throws InvalidSourceException if this source is invalid.
    */
-  def validateTaps(mode: Mode): Unit = {}
+  def validateTaps(mode: Mode): Unit = {} // linter:ignore
 
   @deprecated("replace with Mappable.toIterator", "0.9.0")
   def readAtSubmitter[T](implicit mode: Mode, conv: TupleConverter[T]): Stream[T] = {
@@ -233,6 +250,24 @@ trait Mappable[+T] extends Source with TypedSource[T] {
     val conv = converter
     mode.openForRead(config, tap).asScala.map { te => conv(te.selectEntry(sourceFields)) }
   }
+
+  /**
+   * Transform this Mappable into another by mapping after.
+   * We don't call this map because of conflicts with Mappable, unfortunately
+   */
+  override def andThen[U](fn: T => U): Mappable[U] = {
+    val self = this // compiler generated self can cause problems with serialization
+    new Mappable[U] {
+      override def sourceFields = self.sourceFields
+      def converter[V >: U]: TupleConverter[V] = self.converter.andThen(fn)
+      override def read(implicit fd: FlowDef, mode: Mode): Pipe = self.read
+      override def andThen[U1](fn2: U => U1) = self.andThen(fn.andThen(fn2))
+      def createTap(readOrWrite: AccessMode)(implicit mode: Mode): Tap[_, _, _] =
+        self.createTap(readOrWrite)(mode)
+      override def validateTaps(mode: Mode): Unit = self.validateTaps(mode)
+    }
+  }
+
 }
 
 /**
@@ -255,9 +290,9 @@ class NullTap[Config, Input, Output, SourceContext, SinkContext]
   def getIdentifier = "nullTap"
   def openForWrite(flowProcess: FlowProcess[Config], output: Output) =
     new TupleEntryCollector {
-      override def add(te: TupleEntry) {}
-      override def add(t: CTuple) {}
-      protected def collect(te: TupleEntry) {}
+      override def add(te: TupleEntry): Unit = ()
+      override def add(t: CTuple): Unit = ()
+      protected def collect(te: TupleEntry): Unit = ()
     }
 
   def createResource(conf: Config) = true

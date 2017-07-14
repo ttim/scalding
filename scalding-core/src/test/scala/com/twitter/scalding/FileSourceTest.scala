@@ -17,9 +17,8 @@ package com.twitter.scalding
 
 import cascading.scheme.NullScheme
 import cascading.tuple.Fields
-import org.scalatest.{ Matchers, WordSpec }
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.mapred.JobConf
+import org.scalatest.{ Matchers, WordSpec }
 
 class MultiTsvInputJob(args: Args) extends Job(args) {
   try {
@@ -39,6 +38,15 @@ class SequenceFileInputJob(args: Args) extends Job(args) {
   }
 }
 
+class MultipleTextLineFilesJob(args: Args) extends Job(args) {
+  try {
+    MultipleTextLineFiles(args.list("input"): _*).write(Tsv("output0"))
+  } catch {
+    case e: Exception => e.printStackTrace()
+  }
+
+}
+
 class FileSourceTest extends WordSpec with Matchers {
   import Dsl._
 
@@ -54,7 +62,7 @@ class FileSourceTest extends WordSpec with Matchers {
             }
         }
       .run
-      .finish
+      .finish()
   }
 
   "A WritableSequenceFile Source" should {
@@ -78,8 +86,23 @@ class FileSourceTest extends WordSpec with Matchers {
           }
       }
       .run
-      .finish
+      .finish()
   }
+
+  "A MultipleTextLineFiles Source" should {
+    JobTest(new MultipleTextLineFilesJob(_))
+      .arg("input", List("input0", "input1"))
+      .source(MultipleTextLineFiles("input0", "input1"), List("foobar", "helloworld"))
+      .sink[String](Tsv("output0")) { outBuf =>
+        "take multiple text files as input sources" in {
+          outBuf should have length 2
+          outBuf.toList shouldBe List("foobar", "helloworld")
+        }
+      }
+      .run
+      .finish()
+  }
+
   "TextLine.toIterator" should {
     "correctly read strings" in {
       TextLine("../tutorial/data/hello.txt").toIterator(Config.default, Local(true)).toList shouldBe List("Hello world", "Goodbye world")
@@ -142,6 +165,7 @@ class FileSourceTest extends WordSpec with Matchers {
 
   "FileSource.globHasSuccessFile" should {
     import TestFileSource.globHasSuccessFile
+
     "accept a directory glob with only _SUCCESS" in {
       globHasSuccessFile("test_data/2013/06/*") shouldBe true
     }
@@ -192,11 +216,6 @@ class FileSourceTest extends WordSpec with Matchers {
       pathIsGood("test_data/2013/04/") shouldBe false
     }
 
-    "reject an empty directory" in {
-      pathIsGood("test_data/2013/05/") shouldBe false
-      pathIsGood("test_data/2013/05/*") shouldBe false
-    }
-
     "reject a directory with only _SUCCESS when specified as a glob" in {
       pathIsGood("test_data/2013/06/*") shouldBe false
     }
@@ -218,19 +237,67 @@ class FileSourceTest extends WordSpec with Matchers {
         pathIsGood("test_data/2013/{04,05}/*") shouldBe true
       }
 
+    // NOTE: this is an undesirable limitation of SuccessFileSource, and is encoded here
+    // as a demonstration. This isn't a great behavior that we'd want to keep.
     "accept a multi-dir glob if all dirs with non-hidden files have _SUCCESS while other dirs " +
       "are empty or don't exist" in {
         pathIsGood("test_data/2013/{02,04,05}/*") shouldBe true
       }
   }
 
-  "invalid source input" should {
-    "Create an InvalidSourceTap an empty directory is given" in {
-      TestInvalidFileSource.createHdfsReadTap shouldBe a[InvalidSourceTap]
+  "FixedPathSource.hdfsWritePath" should {
+    "crib if path == *" in {
+      intercept[AssertionError] { TestFixedPathSource("*").hdfsWritePath }
     }
-    "Throw in toIterator because no data is present" in {
-      an[InvalidSourceException] should be thrownBy (
-        TestInvalidFileSource.toIterator(Config.default, Hdfs(true, new JobConf())))
+
+    "crib if path == /*" in {
+      intercept[AssertionError] { TestFixedPathSource("/*").hdfsWritePath }
+    }
+
+    "remove /* from a path ending in /*" in {
+      TestFixedPathSource("test_data/2013/06/*").hdfsWritePath shouldBe "test_data/2013/06"
+    }
+
+    "leave path as-is when it ends in a directory name" in {
+      TestFixedPathSource("test_data/2013/06").hdfsWritePath shouldBe "test_data/2013/06"
+    }
+
+    "leave path as-is when it ends in a directory name/" in {
+      TestFixedPathSource("test_data/2013/06/").hdfsWritePath shouldBe "test_data/2013/06/"
+    }
+
+    "leave path as-is when it ends in * without a preceeding /" in {
+      TestFixedPathSource("test_data/2013/06*").hdfsWritePath shouldBe "test_data/2013/06*"
+    }
+  }
+
+  "invalid source input" should {
+    "Throw in validateTaps in strict mode" in {
+      val e = intercept[InvalidSourceException] {
+        TestInvalidFileSource.validateTaps(Hdfs(strict = true, new Configuration()))
+      }
+      assert(e.getMessage.endsWith("Data is missing from one or more paths in: List(invalid_hdfs_path)"))
+    }
+
+    "Throw in validateTaps in non-strict mode" in {
+      val e = intercept[InvalidSourceException] {
+        TestInvalidFileSource.validateTaps(Hdfs(strict = false, new Configuration()))
+      }
+      assert(e.getMessage.endsWith("No good paths in: List(invalid_hdfs_path)"))
+    }
+
+    "Throw in toIterator because no data is present in strict mode" in {
+      val e = intercept[InvalidSourceException] {
+        TestInvalidFileSource.toIterator(Config.default, Hdfs(strict = true, new Configuration()))
+      }
+      assert(e.getMessage.endsWith("Data is missing from one or more paths in: List(invalid_hdfs_path)"))
+    }
+
+    "Throw in toIterator because no data is present in non-strict mode" in {
+      val e = intercept[InvalidSourceException] {
+        TestInvalidFileSource.toIterator(Config.default, Hdfs(strict = false, new Configuration()))
+      }
+      assert(e.getMessage.endsWith("No good paths in: List(invalid_hdfs_path)"))
     }
   }
 }
@@ -267,16 +334,11 @@ object TestSuccessFileSource extends FileSource with SuccessFileSource {
 }
 
 object TestInvalidFileSource extends FileSource with Mappable[String] {
-
   override def hdfsPaths: Iterable[String] = Iterable("invalid_hdfs_path")
   override def localPaths: Iterable[String] = Iterable("invalid_local_path")
   override def hdfsScheme = new NullScheme(Fields.ALL, Fields.NONE)
   override def converter[U >: String] =
     TupleConverter.asSuperConverter[String, U](implicitly[TupleConverter[String]])
-
-  val conf = new Configuration()
-
-  def pathIsGood(p: String) = false
-  val hdfsMode: Hdfs = Hdfs(false, conf)
-  def createHdfsReadTap = super.createHdfsReadTap(hdfsMode)
 }
+
+case class TestFixedPathSource(path: String*) extends FixedPathSource(path: _*)

@@ -1,6 +1,7 @@
 package com.twitter.scalding
 
 import cascading.flow.{ Flow, FlowListener, FlowDef, FlowProcess }
+import cascading.flow.hadoop.HadoopFlowProcess
 import cascading.stats.CascadingStats
 import java.util.concurrent.ConcurrentHashMap
 import org.slf4j.{ Logger, LoggerFactory }
@@ -27,9 +28,9 @@ trait Stat extends java.io.Serializable {
    */
   def incBy(amount: Long): Unit
   /** increment by 1L */
-  def inc: Unit = incBy(1L)
+  def inc(): Unit = incBy(1L)
   /** increment by -1L (decrement) */
-  def dec: Unit = incBy(-1L)
+  def dec(): Unit = incBy(-1L)
   def key: StatKey
 }
 
@@ -46,12 +47,34 @@ object StatKey {
   implicit def fromStat(stat: Stat): StatKey = stat.key
 }
 
+private[scalding] object CounterImpl {
+  def apply(fp: FlowProcess[_], statKey: StatKey): CounterImpl =
+    fp match {
+      case hFP: HadoopFlowProcess => HadoopFlowPCounterImpl(hFP, statKey)
+      case _ => GenericFlowPCounterImpl(fp, statKey)
+    }
+}
+
+sealed private[scalding] trait CounterImpl {
+  def increment(amount: Long): Unit
+}
+
+private[scalding] case class GenericFlowPCounterImpl(fp: FlowProcess[_], statKey: StatKey) extends CounterImpl {
+  override def increment(amount: Long): Unit = fp.increment(statKey.group, statKey.counter, amount)
+}
+
+private[scalding] case class HadoopFlowPCounterImpl(fp: HadoopFlowProcess, statKey: StatKey) extends CounterImpl {
+  private[this] val cntr = fp.getReporter().getCounter(statKey.group, statKey.counter)
+  override def increment(amount: Long): Unit = cntr.increment(amount)
+}
+
 object Stat {
+
   def apply(k: StatKey)(implicit uid: UniqueID): Stat = new Stat {
     // This is materialized on the mappers, and will throw an exception if users incBy before then
-    private[this] lazy val flowProcess: FlowProcess[_] = RuntimeStats.getFlowProcessForUniqueId(uid)
+    private[this] lazy val cntr = CounterImpl(RuntimeStats.getFlowProcessForUniqueId(uid), k)
 
-    def incBy(amount: Long): Unit = flowProcess.increment(k.group, k.counter, amount)
+    def incBy(amount: Long): Unit = cntr.increment(amount)
     def key: StatKey = k
   }
 }
@@ -66,13 +89,14 @@ object Stats {
     cascadingStats.getCounterValue(key.group, key.counter)
 
   // Returns a map of all custom counter names and their counts.
-  def getAllCustomCounters()(implicit cascadingStats: CascadingStats): Map[String, Long] = {
-    val counts = for {
-      counter <- cascadingStats.getCountersFor(ScaldingGroup).asScala
-      value = getCounterValue(counter)
-    } yield (counter, value)
-    counts.toMap
-  }
+  def getAllCustomCounters()(implicit cascadingStats: CascadingStats): Map[String, Long] =
+    cascadingStats.getCountersFor(ScaldingGroup)
+      .asScala
+      .map { counter =>
+        val value = getCounterValue(counter)
+        (counter, value)
+      }
+      .toMap
 }
 
 /**
@@ -127,7 +151,7 @@ object RuntimeStats extends java.io.Serializable {
   }
 
   private[this] var prevFP: FlowProcess[_] = null
-  def addFlowProcess(fp: FlowProcess[_]) {
+  def addFlowProcess(fp: FlowProcess[_]): Unit = {
     if (!(prevFP eq fp)) {
       val uniqueJobIdObj = fp.getProperty(UniqueID.UNIQUE_JOB_ID)
       if (uniqueJobIdObj != null) {
@@ -156,7 +180,7 @@ object RuntimeStats extends java.io.Serializable {
     val id = UniqueID.getIDFor(flowDef)
     () => {
       val flowProcess = RuntimeStats.getFlowProcessForUniqueId(id)
-      flowProcess.keepAlive
+      flowProcess.keepAlive()
     }
   }
 }

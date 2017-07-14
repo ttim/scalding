@@ -19,9 +19,10 @@ import com.twitter.scalding._
 import cascading.pipe.joiner._
 import org.scalatest.{ Matchers, WordSpec }
 import com.twitter.algebird.Group
+import com.twitter.algebird.field._
 
 object TUtil {
-  def printStack(fn: => Unit) {
+  def printStack(fn: => Unit): Unit = {
     try { fn } catch { case e: Throwable => e.printStackTrace; throw e }
   }
 }
@@ -448,7 +449,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -470,7 +471,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -485,7 +486,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -499,7 +500,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -530,7 +531,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
   "A Matrix Cosine job" should {
@@ -543,7 +544,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
   "A Matrix Covariance job" should {
@@ -556,7 +557,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
   "A Matrix VctProd job" should {
@@ -569,7 +570,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
   "A Matrix VctDiv job" should {
@@ -582,7 +583,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
   "A Matrix ScalarOps job" should {
@@ -620,7 +621,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
   "A Matrix Diagonal job" should {
@@ -656,7 +657,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -682,7 +683,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -701,7 +702,7 @@ class MatrixTest extends WordSpec with Matchers {
         }
       }
       .run
-      .finish
+      .finish()
   }
 
   "A Matrix RowMatProd job" should {
@@ -714,7 +715,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -728,7 +729,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -742,7 +743,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -756,7 +757,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -770,7 +771,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -784,7 +785,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -804,7 +805,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -824,7 +825,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -844,7 +845,7 @@ class MatrixTest extends WordSpec with Matchers {
           }
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -867,7 +868,7 @@ class MatrixTest extends WordSpec with Matchers {
           idx += 1
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -890,7 +891,7 @@ class MatrixTest extends WordSpec with Matchers {
           idx += 1
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -913,7 +914,7 @@ class MatrixTest extends WordSpec with Matchers {
           idx += 1
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -936,7 +937,7 @@ class MatrixTest extends WordSpec with Matchers {
           idx += 1
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -959,7 +960,7 @@ class MatrixTest extends WordSpec with Matchers {
           idx += 1
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -982,7 +983,7 @@ class MatrixTest extends WordSpec with Matchers {
           idx += 1
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -1004,7 +1005,7 @@ class MatrixTest extends WordSpec with Matchers {
           idx += 1
         }
         .run
-        .finish
+        .finish()
     }
   }
 
@@ -1035,7 +1036,7 @@ class MatrixTest extends WordSpec with Matchers {
           idx += 1
         }
         .run
-        .finish
+        .finish()
     }
   }
 }
