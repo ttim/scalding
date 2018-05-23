@@ -1,29 +1,19 @@
 package com.twitter.scalding.typed.cascading_backend
 
 import cascading.flow.FlowDef
-import cascading.operation.{ Debug, Operation }
-import cascading.pipe.{ CoGroup, Each, Pipe, HashJoin }
-import cascading.tuple.{ Fields, Tuple => CTuple, TupleEntry }
-import com.stripe.dagon.{ FunctionK, HCache, Id, Memoize, Rule, Dag }
-import com.twitter.scalding.TupleConverter.{ singleConverter, tuple2Converter }
-import com.twitter.scalding.TupleSetter.{ singleSetter, tup2Setter }
-import com.twitter.scalding.{
-  CleanupIdentityFunction, Config, Dsl, Execution, Field, FlatMapFunction, FlowState, FlowStateMap, GroupBuilder,
-  HadoopMode, IncrementCounters, LineNumber, IterableSource, MapsideReduce, Mode, RichFlowDef,
-  RichPipe, TupleConverter, TupleGetter, TupleSetter, TypedBufferOp, WrappedJoiner, Write
-}
+import cascading.operation.{Debug, Operation}
+import cascading.pipe.{CoGroup, Each, HashJoin, Pipe}
+import cascading.tuple.{Fields, TupleEntry, Tuple => CTuple}
+import com.stripe.dagon.{Dag, FunctionK, HCache, Id, Memoize, Rule}
+import com.twitter.scalding.TupleConverter.{singleConverter, tuple2Converter}
+import com.twitter.scalding.TupleSetter.{singleSetter, tup2Setter}
+import com.twitter.scalding.grouping.{Grouping, KeyGroupingFactory}
+import com.twitter.scalding.{CleanupIdentityFunction, Config, Dsl, Execution, Field, FlatMapFunction, FlowState, FlowStateMap, GroupBuilder, HadoopMode, IncrementCounters, IterableSource, LineNumber, MapsideReduce, Mode, RichFlowDef, RichPipe, TupleConverter, TupleGetter, TupleSetter, TypedBufferOp, WrappedJoiner, Write}
 import com.twitter.scalding.typed._
-import com.twitter.scalding.typed.functions.{ FilterKeysToFilter, MapValuesToMap, FlatMapValuesToFlatMap, FlatMappedFn }
-import com.twitter.scalding.serialization.{
-  Boxed,
-  BoxedOrderedSerialization,
-  CascadingBinaryComparator,
-  EquivSerialization,
-  OrderedSerialization,
-  WrappedSerialization
-}
+import com.twitter.scalding.typed.functions.{FilterKeysToFilter, FlatMapValuesToFlatMap, FlatMappedFn, MapValuesToMap}
+import com.twitter.scalding.serialization.{Boxed, BoxedOrderedSerialization, CascadingBinaryComparator, EquivSerialization, OrderedSerialization, WrappedSerialization}
 import java.util.WeakHashMap
-import scala.collection.mutable.{ Map => MMap }
+import scala.collection.mutable.{Map => MMap}
 
 object CascadingBackend {
 
@@ -42,8 +32,8 @@ object CascadingBackend {
   private val kvFields: Fields = new Fields("key", "value")
   private val f0: Fields = new Fields(java.lang.Integer.valueOf(0))
 
-  private def tuple2Conv[K, V](ord: Ordering[K]): TupleConverter[(K, V)] =
-    ord match {
+  private def tuple2Conv[K, V](grouping: Grouping[K]): TupleConverter[(K, V)] =
+    toOrd(grouping) match {
       case _: OrderedSerialization[_] =>
         tuple2Converter[Boxed[K], V].andThen { kv =>
           (kv._1.get, kv._2)
@@ -58,15 +48,15 @@ object CascadingBackend {
       case _ => TupleConverter.singleConverter[V]
     }.getOrElse(TupleConverter.singleConverter[V])
 
-  private def keyConverter[K](ord: Ordering[K]): TupleConverter[K] =
-    ord match {
+  private def keyConverter[K](grouping: Grouping[K]): TupleConverter[K] =
+    toOrd(grouping) match {
       case _: OrderedSerialization[_] =>
         TupleConverter.singleConverter[Boxed[K]].andThen(_.get)
       case _ => TupleConverter.singleConverter[K]
     }
 
-  private def keyGetter[K](ord: Ordering[K]): TupleGetter[K] =
-    ord match {
+  private def keyGetter[K](grouping: Grouping[K]): TupleGetter[K] =
+    toOrd(grouping) match {
       case _: OrderedSerialization[K] =>
         new TupleGetter[K] {
           def get(tup: CTuple, i: Int) = tup.getObject(i).asInstanceOf[Boxed[K]].get
@@ -95,8 +85,8 @@ object CascadingBackend {
    * Check if the Ordering is an OrderedSerialization, if so box in a Boxed so hadoop and cascading
    * can dispatch the right serialization
    */
-  private def maybeBox[K, V](ord: Ordering[K], flowDef: FlowDef)(op: (TupleSetter[(K, V)], Fields) => Pipe): Pipe =
-    ord match {
+  private def maybeBox[K, V](grouping: Grouping[K], flowDef: FlowDef)(op: (TupleSetter[(K, V)], Fields) => Pipe): Pipe =
+    toOrd(grouping) match {
       case ordser: OrderedSerialization[K] =>
         val (boxfn, boxordSer) = getBoxFnAndOrder[K](ordser, flowDef)
 
@@ -104,7 +94,7 @@ object CascadingBackend {
         val keyF = new Fields("key")
         keyF.setComparator("key", new CascadingBinaryComparator(boxordSer))
         op(ts, keyF)
-      case _ =>
+      case ord =>
         val ts = tup2Setter[(K, V)]
         val keyF = Field.singleOrdered("key")(ord)
         op(ts, keyF)
@@ -530,9 +520,9 @@ object CascadingBackend {
       List("key", "value") ++ (0 until (2 * (inCount - 1))).map("null%d".format(_))
 
     // Make this stable so the compiler does not make a closure
-    val ord = cg.keyOrdering
+    val grouping = cg.keyGrouping
 
-    val newPipe = maybeBox[K, Any](ord, flowDef) { (tupset, ordKeyField) =>
+    val newPipe = maybeBox[K, Any](grouping, flowDef) { (tupset, ordKeyField) =>
       if (firstCount == inputs.size) {
         /**
          * This is a self-join
@@ -546,7 +536,7 @@ object CascadingBackend {
           ordKeyField,
           NUM_OF_SELF_JOINS,
           outFields(firstCount),
-          WrappedJoiner(new DistinctCoGroupJoiner(firstCount, keyGetter(ord), joinFunction)))
+          WrappedJoiner(new DistinctCoGroupJoiner(firstCount, keyGetter(grouping), joinFunction)))
       } else if (firstCount == 1) {
 
         def keyId(idx: Int): String = "key%d".format(idx)
@@ -587,12 +577,12 @@ object CascadingBackend {
               idx -> distincts.indexWhere(_ == item)
           }.toMap
 
-          new CoGroupedJoiner(isize, keyGetter(ord), joinFunction) {
+          new CoGroupedJoiner(isize, keyGetter(grouping), joinFunction) {
             val distinctSize = dsize
             def distinctIndexOf(orig: Int) = mapping(orig)
           }
         } else {
-          new DistinctCoGroupJoiner(isize, keyGetter(ord), joinFunction)
+          new DistinctCoGroupJoiner(isize, keyGetter(grouping), joinFunction)
         }
 
         new CoGroup(pipes, groupFields, outFields(dsize), WrappedJoiner(cjoiner))
@@ -642,12 +632,12 @@ object CascadingBackend {
     val mappedPipe = rec(right.mapped).toPipe(new Fields("key1", "value1"), fd, tup2Setter)
 
     val singleValuePerRightKey = CoGroupable.atMostOneValue(right)
-    val keyOrdering = right.keyOrdering
+    val keyGrouping = right.keyGrouping
     val hashPipe = new HashJoin(
       RichPipe.assignName(leftPipe),
-      Field.singleOrdered("key")(keyOrdering),
+      Field.singleOrdered("key")(toOrd(keyGrouping)),
       mappedPipe,
-      Field.singleOrdered("key1")(keyOrdering),
+      Field.singleOrdered("key1")(toOrd(keyGrouping)),
       WrappedJoiner(new HashJoiner(singleValuePerRightKey, right.joinFunction, joiner)))
 
     CascadingPipe[(K, R)](
@@ -668,7 +658,7 @@ object CascadingBackend {
 
     def groupOpWithValueSort(valueSort: Option[Ordering[V1]])(gb: GroupBuilder => GroupBuilder): CascadingPipe[_ <: (K, V2)] = {
       val flowDef = new FlowDef
-      val pipe = maybeBox[K, V1](rs.keyOrdering, flowDef) { (tupleSetter, fields) =>
+      val pipe = maybeBox[K, V1](rs.keyGrouping, flowDef) { (tupleSetter, fields) =>
         val (sortOpt, ts) = valueSort.map {
           case ordser: OrderedSerialization[V1 @unchecked] =>
             // We get in here when we do a secondary sort
@@ -693,7 +683,7 @@ object CascadingBackend {
         }
       }
 
-      val tupConv = tuple2Conv[K, V2](rs.keyOrdering)
+      val tupConv = tuple2Conv[K, V2](rs.keyGrouping)
       CascadingPipe(pipe, kvFields, flowDef, tupConv)
     }
 
@@ -732,7 +722,7 @@ object CascadingBackend {
           // If its an ordered serialization we need to unbox
           // the value before handing it to the users operation
           _.every(new cascading.pipe.Every(_, valueField,
-            new TypedBufferOp[K, V1, V2](keyConverter(vsr.keyOrdering),
+            new TypedBufferOp[K, V1, V2](keyConverter(vsr.keyGrouping),
               valueConverter(optVOrdering),
               vsr.reduceFn,
               valueField), Fields.REPLACE))
@@ -742,11 +732,13 @@ object CascadingBackend {
       case imr@IteratorMappedReduce(_, _, _, _, _) =>
         groupOp {
           _.every(new cascading.pipe.Every(_, valueField,
-            new TypedBufferOp(keyConverter(imr.keyOrdering), TupleConverter.singleConverter[V1], imr.reduceFn, valueField), Fields.REPLACE))
+            new TypedBufferOp(keyConverter(imr.keyGrouping), TupleConverter.singleConverter[V1], imr.reduceFn, valueField), Fields.REPLACE))
             .reducers(imr.reducers.getOrElse(-1))
             .setDescriptions(imr.descriptions)
         }
     }
   }
-}
 
+  private def toOrd[T](grouping: Grouping[T]): Ordering[T] =
+    KeyGroupingFactory.toOrdering(grouping)
+}

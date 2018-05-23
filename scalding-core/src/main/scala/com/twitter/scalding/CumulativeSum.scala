@@ -1,6 +1,8 @@
 package com.twitter.scalding.typed
 
 import com.twitter.algebird._
+import com.twitter.scalding.grouping.Grouping
+import com.twitter.scalding.serialization.macros.impl.BinaryOrdering.ordSer
 
 /**
  * Extension for TypedPipe to add a cumulativeSum method.
@@ -39,7 +41,7 @@ object CumulativeSum {
     def cumulativeSum(
       implicit sg: Semigroup[V],
       ordU: Ordering[U],
-      ordK: Ordering[K]): SortedGrouped[K, (U, V)] = {
+      ordK: Grouping[K]): SortedGrouped[K, (U, V)] = {
       pipe.group
         .sortBy { case (u, _) => u }
         .scanLeft(Nil: List[(U, V)]) {
@@ -62,14 +64,14 @@ object CumulativeSum {
       implicit ordS: Ordering[S],
       sg: Semigroup[V],
       ordU: Ordering[U],
-      ordK: Ordering[K]): TypedPipe[(K, (U, V))] = {
-
+      ordK: Grouping[K]): TypedPipe[(K, (U, V))] = {
+      implicit val groupingS: Grouping[S] = Grouping.ordering[S]
       val sumPerS = pipe
         .map { case (k, (u, v)) => (k, partition(u)) -> v }
         .sumByKey
         .map { case ((k, s), v) => (k, (s, v)) }
         .group
-        .sortBy { case (s, v) => s }
+        .sortBy { case (s, v) => s }(ordS)
         .scanLeft(None: Option[(Option[V], V, S)]) {
           case (acc, (s, v)) =>
             acc match {

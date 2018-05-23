@@ -344,7 +344,7 @@ lazy val scaldingCore = module("core").settings(
     "org.slf4j" % "slf4j-api" % slf4jVersion,
     "org.slf4j" % "slf4j-log4j12" % slf4jVersion % "provided"),
   addCompilerPlugin("org.scalamacros" % "paradise" % paradiseVersion cross CrossVersion.full)
-).dependsOn(scaldingArgs, scaldingDate, scaldingSerialization, maple, scaldingQuotation)
+).dependsOn(scaldingArgs, scaldingDate, scaldingSerialization, scaldingGrouping, maple, scaldingQuotation)
 
 lazy val scaldingSpark = module("spark").settings(
   libraryDependencies ++= Seq(
@@ -515,6 +515,13 @@ lazy val scaldingSerialization = module("serialization").settings(
   ),
 addCompilerPlugin("org.scalamacros" % "paradise" % paradiseVersion cross CrossVersion.full)
 )
+
+lazy val scaldingGrouping = module("grouping").settings(
+  libraryDependencies ++= Seq(
+    "org.scala-lang" % "scala-reflect" % scalaVersion.value
+  ),
+  addCompilerPlugin("org.scalamacros" % "paradise" % paradiseVersion cross CrossVersion.full)
+).dependsOn(scaldingSerialization)
 
 lazy val scaldingJson = module("json").settings(
   libraryDependencies ++= Seq(

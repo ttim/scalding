@@ -15,12 +15,14 @@ limitations under the License.
 */
 package com.twitter.scalding.typed
 
+import com.twitter.scalding.grouping.Grouping
+
 /**
  * Represents anything that starts as a TypedPipe of Key Value, where
  * the value type has been erased. Acts as proof that the K in the tuple
  * has an Ordering
  */
 trait KeyedPipe[K] {
-  def keyOrdering: Ordering[K]
+  def keyGrouping: Grouping[K]
   def mapped: TypedPipe[(K, Any)]
 }

@@ -106,13 +106,13 @@ object WritePartitioner {
           type TK[+Z] = TypedPipe[(K, Z)]
           val mappedV2 = step.evidence.subst[TK](step.mapped)
           mat.map(recurse(mappedV2)) { (tp: TypedPipe[(K, V2)]) =>
-            IdentityReduce[K, V2, V2](step.keyOrdering, tp, step.reducers, step.descriptions, implicitly)
+            IdentityReduce[K, V2, V2](step.keyGrouping, tp, step.reducers, step.descriptions, implicitly)
           }
         case step@UnsortedIdentityReduce(_, _, _, _, _) =>
           type TK[+Z] = TypedPipe[(K, Z)]
           val mappedV2 = step.evidence.subst[TK](step.mapped)
           mat.map(recurse(mappedV2)) { (tp: TypedPipe[(K, V2)]) =>
-            UnsortedIdentityReduce[K, V2, V2](step.keyOrdering, tp, step.reducers, step.descriptions, implicitly)
+            UnsortedIdentityReduce[K, V2, V2](step.keyGrouping, tp, step.reducers, step.descriptions, implicitly)
           }
         case step@IteratorMappedReduce(_, _, _, _, _) =>
           def go[A, B, C](imr: IteratorMappedReduce[A, B, C]) =
@@ -148,7 +148,7 @@ object WritePartitioner {
             // as a contravariant type, despite it not being defined
             // that way.
             cg.asInstanceOf[CoGroupable[K, V1]]
-          case kvPipe => IdentityReduce[K, V1, V1](cg.keyOrdering, kvPipe, None, Nil, implicitly)
+          case kvPipe => IdentityReduce[K, V1, V1](cg.keyGrouping, kvPipe, None, Nil, implicitly)
         }
 
       cg match {
@@ -172,7 +172,7 @@ object WritePartitioner {
                 case CoGroupedPipe(cg) =>
                   CoGroupedPipe(WithReducers(cg, reds))
                 case kvPipe =>
-                  ReduceStepPipe(IdentityReduce[K, V1, V1](cg.keyOrdering, kvPipe, None, Nil, implicitly)
+                  ReduceStepPipe(IdentityReduce[K, V1, V1](cg.keyGrouping, kvPipe, None, Nil, implicitly)
                     .withReducers(reds))
               }
             }
@@ -220,7 +220,7 @@ object WritePartitioner {
                 case CoGroupedPipe(cg) =>
                   CoGroupedPipe(MapGroup(cg, fn))
                 case kvPipe =>
-                  val rs = IdentityReduce[K, V1, V1](cg.keyOrdering, kvPipe, None, Nil, implicitly)
+                  val rs = IdentityReduce[K, V1, V1](cg.keyGrouping, kvPipe, None, Nil, implicitly)
                   ReduceStepPipe(ReduceStep.mapGroup(rs)(fn))
               }
             }

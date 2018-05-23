@@ -1,8 +1,9 @@
 package com.twitter.scalding.typed
 
-import com.stripe.dagon.{ FunctionK, Memoize, Rule, PartialRule, Dag, Literal }
-import com.twitter.scalding.typed.functions.{ FlatMapping, FlatMappedFn, FilterKeysToFilter, FilterGroup, Fill, MapGroupMapValues, MapGroupFlatMapValues, SumAll, MapValueStream }
-import com.twitter.scalding.typed.functions.ComposedFunctions.{ ComposedMapFn, ComposedFilterFn, ComposedOnComplete }
+import com.stripe.dagon.{Dag, FunctionK, Literal, Memoize, PartialRule, Rule}
+import com.twitter.scalding.grouping.Grouping
+import com.twitter.scalding.typed.functions.{Fill, FilterGroup, FilterKeysToFilter, FlatMappedFn, FlatMapping, MapGroupFlatMapValues, MapGroupMapValues, MapValueStream, SumAll}
+import com.twitter.scalding.typed.functions.ComposedFunctions.{ComposedFilterFn, ComposedMapFn, ComposedOnComplete}
 
 object OptimizationRules {
   type LiteralPipe[T] = Literal[TypedPipe, T]
@@ -121,7 +122,7 @@ object OptimizationRules {
             val (cg, d1) = pipeToCG(pipe)
             (cg, ComposeDescriptions.combine(d1, descs))
           case kvPipe =>
-            (IdentityReduce[K, V1, V1](cg.keyOrdering, kvPipe, None, Nil, implicitly), Nil)
+            (IdentityReduce[K, V1, V1](cg.keyGrouping, kvPipe, None, Nil, implicitly), Nil)
         }
 
       cg match {
@@ -152,7 +153,7 @@ object OptimizationRules {
                 case CoGroupedPipe(cg) =>
                   CoGroupedPipe(WithReducers(cg, reds))
                 case kvPipe =>
-                  ReduceStepPipe(IdentityReduce[K, V1, V1](cg.keyOrdering, kvPipe, None, Nil, implicitly)
+                  ReduceStepPipe(IdentityReduce[K, V1, V1](cg.keyGrouping, kvPipe, None, Nil, implicitly)
                     .withReducers(reds))
               }
             })
@@ -201,7 +202,7 @@ object OptimizationRules {
                   CoGroupedPipe(MapGroup(cg, fn))
                 case kvPipe =>
                   ReduceStepPipe(
-                    IdentityReduce[K, V1, V1](cg.keyOrdering, kvPipe, None, Nil, implicitly)
+                    IdentityReduce[K, V1, V1](cg.keyGrouping, kvPipe, None, Nil, implicitly)
                       .mapGroup(fn))
               }
             })
@@ -224,7 +225,7 @@ object OptimizationRules {
         widen(go(rs))
       }
 
-      val ordK: Ordering[K] = hj.right.keyOrdering
+      val groupingK: Grouping[K] = hj.right.keyGrouping
       val joiner = hj.joiner
 
       Binary(recurse(hj.left), rightLit,
@@ -233,7 +234,7 @@ object OptimizationRules {
             case ReduceStepPipe(hg: HashJoinable[K @unchecked, V2 @unchecked]) =>
               HashCoGroup(ltp, hg, joiner)
             case otherwise =>
-              HashCoGroup(ltp, IdentityReduce[K, V2, V2](ordK, otherwise, None, Nil, implicitly), joiner)
+              HashCoGroup(ltp, IdentityReduce[K, V2, V2](groupingK, otherwise, None, Nil, implicitly), joiner)
           }
         })
     }
@@ -931,7 +932,7 @@ object OptimizationRules {
   object HashToShuffleCoGroup extends Rule[TypedPipe] {
     def apply[T](on: Dag[TypedPipe]) = {
       case HashCoGroup(left, right: HashJoinable[a, b], joiner) =>
-        val leftg = Grouped(left)(right.keyOrdering)
+        val leftg = Grouped(left)(right.keyGrouping)
         val joiner2 = Joiner.toCogroupJoiner2(joiner)
         Some(CoGroupedPipe(CoGrouped.Pair(leftg, right, joiner2)))
       case (cp@CrossPipe(_, _)) => Some(cp.viaHashJoin)
