@@ -234,7 +234,8 @@ lazy val scalding = Project(
   executionTutorial,
   scaldingSerialization,
   scaldingSpark,
-  scaldingThriftMacros
+  scaldingThriftMacros,
+  scaldingGrouping
 )
 
 lazy val scaldingAssembly = Project(
@@ -256,7 +257,8 @@ lazy val scaldingAssembly = Project(
   scaldingJson,
   scaldingJdbc,
   maple,
-  scaldingSerialization
+  scaldingSerialization,
+  scaldingGrouping
 )
 
 lazy val formattingPreferences = {
