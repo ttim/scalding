@@ -7,7 +7,7 @@ import cascading.tuple.{Fields, TupleEntry, Tuple => CTuple}
 import com.stripe.dagon.{Dag, FunctionK, HCache, Id, Memoize, Rule}
 import com.twitter.scalding.TupleConverter.{singleConverter, tuple2Converter}
 import com.twitter.scalding.TupleSetter.{singleSetter, tup2Setter}
-import com.twitter.scalding.grouping.{Grouping, GroupingFactory}
+import com.twitter.scalding.grouping.Grouping
 import com.twitter.scalding.{CleanupIdentityFunction, Config, Dsl, Execution, Field, FlatMapFunction, FlowState, FlowStateMap, GroupBuilder, HadoopMode, IncrementCounters, IterableSource, LineNumber, MapsideReduce, Mode, RichFlowDef, RichPipe, TupleConverter, TupleGetter, TupleSetter, TypedBufferOp, WrappedJoiner, Write}
 import com.twitter.scalding.typed._
 import com.twitter.scalding.typed.functions.{FilterKeysToFilter, FlatMapValuesToFlatMap, FlatMappedFn, MapValuesToMap}
@@ -740,5 +740,5 @@ object CascadingBackend {
   }
 
   private def toOrd[T](grouping: Grouping[T]): Ordering[T] =
-    GroupingFactory.toOrdering(grouping)
+    OrderingFactory.BackwardCompatible().toOrdering(grouping).get
 }
