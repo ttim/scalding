@@ -740,5 +740,8 @@ object CascadingBackend {
   }
 
   private def toOrd[T](grouping: Grouping[T]): Ordering[T] =
-    OrderingFactory.BackwardCompatible().toOrdering(grouping).get
+    orderingFactory.toOrdering(grouping).get
+
+  private def orderingFactory(): OrderingFactory =
+    OrderingFactory.BackwardCompatible()
 }
