@@ -32,8 +32,8 @@ object CascadingBackend {
   private val kvFields: Fields = new Fields("key", "value")
   private val f0: Fields = new Fields(java.lang.Integer.valueOf(0))
 
-  private def tuple2Conv[K, V](grouping: Grouping[K]): TupleConverter[(K, V)] =
-    toOrd(grouping) match {
+  private def tuple2Conv[K, V](factory: OrderingFactory, grouping: Grouping[K]): TupleConverter[(K, V)] =
+    factory.toOrdering(grouping).get match {
       case _: OrderedSerialization[_] =>
         tuple2Converter[Boxed[K], V].andThen { kv =>
           (kv._1.get, kv._2)
@@ -48,15 +48,15 @@ object CascadingBackend {
       case _ => TupleConverter.singleConverter[V]
     }.getOrElse(TupleConverter.singleConverter[V])
 
-  private def keyConverter[K](grouping: Grouping[K]): TupleConverter[K] =
-    toOrd(grouping) match {
+  private def keyConverter[K](factory: OrderingFactory, grouping: Grouping[K]): TupleConverter[K] =
+    factory.toOrdering(grouping).get match {
       case _: OrderedSerialization[_] =>
         TupleConverter.singleConverter[Boxed[K]].andThen(_.get)
       case _ => TupleConverter.singleConverter[K]
     }
 
-  private def keyGetter[K](grouping: Grouping[K]): TupleGetter[K] =
-    toOrd(grouping) match {
+  private def keyGetter[K](factory: OrderingFactory, grouping: Grouping[K]): TupleGetter[K] =
+    factory.toOrdering(grouping) match {
       case _: OrderedSerialization[K] =>
         new TupleGetter[K] {
           def get(tup: CTuple, i: Int) = tup.getObject(i).asInstanceOf[Boxed[K]].get
@@ -85,8 +85,8 @@ object CascadingBackend {
    * Check if the Ordering is an OrderedSerialization, if so box in a Boxed so hadoop and cascading
    * can dispatch the right serialization
    */
-  private def maybeBox[K, V](grouping: Grouping[K], flowDef: FlowDef)(op: (TupleSetter[(K, V)], Fields) => Pipe): Pipe =
-    toOrd(grouping) match {
+  private def maybeBox[K, V](factory: OrderingFactory, grouping: Grouping[K], flowDef: FlowDef)(op: (TupleSetter[(K, V)], Fields) => Pipe): Pipe =
+    factory.toOrdering(grouping).get match {
       case ordser: OrderedSerialization[K] =>
         val (boxfn, boxordSer) = getBoxFnAndOrder[K](ordser, flowDef)
 
@@ -174,6 +174,8 @@ object CascadingBackend {
   private def compile[T](mode: Mode): FunctionK[TypedPipe, CascadingPipe] =
     Memoize.functionK[TypedPipe, CascadingPipe](
       new Memoize.RecursiveK[TypedPipe, CascadingPipe] {
+        val factory: OrderingFactory = orderingFactory(configFromMode(mode))
+
         def toFunction[T] = {
           case (cp@CounterPipe(_), rec) =>
             def go[A](cp: CounterPipe[A]): CascadingPipe[A] = {
@@ -320,14 +322,15 @@ object CascadingBackend {
               planHashJoin(hcg.left,
                 hcg.right,
                 hcg.joiner,
-                rec)
+                rec,
+                factory)
 
             go(hcg)
           case (ReduceStepPipe(rs), rec) =>
-            planReduceStep(rs, rec)
+            planReduceStep(rs, rec, factory)
 
           case (CoGroupedPipe(cg), rec) =>
-            planCoGroup(cg, rec)
+            planCoGroup(cg, rec, factory)
         }
       })
 
@@ -368,11 +371,7 @@ object CascadingBackend {
 
   final def toPipe[U](p: TypedPipe[U], fieldNames: Fields)(implicit flowDef: FlowDef, mode: Mode, setter: TupleSetter[U]): Pipe = {
 
-    val phases = defaultOptimizationRules(
-      mode match {
-        case h: HadoopMode => Config.fromHadoop(h.jobConf)
-        case _ => Config.empty
-      })
+    val phases = defaultOptimizationRules(configFromMode(mode))
     val (d, id) = Dag(p, OptimizationRules.toLiteral)
     val d1 = d.applySeq(phases)
     val p1 = d1.evaluate(id)
@@ -401,11 +400,7 @@ object CascadingBackend {
       require(tw.mode == mode, s"${tw.mode} should be equal to $mode")
       (nextDag, (id, tw.sink) :: items)
     }
-    val phases = defaultOptimizationRules(
-      mode match {
-        case h: HadoopMode => Config.fromHadoop(h.jobConf)
-        case _ => Config.empty
-      })
+    val phases = defaultOptimizationRules(configFromMode(mode))
     val optDag = rootedDag.applySeq(phases)
     def doWrite[A](pair: (Id[A], TypedSink[A])): Unit = {
       val optPipe = optDag.evaluate(pair._1)
@@ -493,7 +488,7 @@ object CascadingBackend {
       .applyFlowConfigProperties(flowDef)
   }
 
-  private def planCoGroup[K, R](cg: CoGrouped[K, R], rec: FunctionK[TypedPipe, CascadingPipe]): CascadingPipe[(K, R)] = {
+  private def planCoGroup[K, R](cg: CoGrouped[K, R], rec: FunctionK[TypedPipe, CascadingPipe], factory: OrderingFactory): CascadingPipe[(K, R)] = {
 
     // This has the side effect of planning all inputs now
     // before we need to call them below
@@ -522,7 +517,7 @@ object CascadingBackend {
     // Make this stable so the compiler does not make a closure
     val grouping = cg.keyGrouping
 
-    val newPipe = maybeBox[K, Any](grouping, flowDef) { (tupset, ordKeyField) =>
+    val newPipe = maybeBox[K, Any](factory, grouping, flowDef) { (tupset, ordKeyField) =>
       if (firstCount == inputs.size) {
         /**
          * This is a self-join
@@ -536,7 +531,7 @@ object CascadingBackend {
           ordKeyField,
           NUM_OF_SELF_JOINS,
           outFields(firstCount),
-          WrappedJoiner(new DistinctCoGroupJoiner(firstCount, keyGetter(grouping), joinFunction)))
+          WrappedJoiner(new DistinctCoGroupJoiner(firstCount, keyGetter(factory, grouping), joinFunction)))
       } else if (firstCount == 1) {
 
         def keyId(idx: Int): String = "key%d".format(idx)
@@ -577,12 +572,12 @@ object CascadingBackend {
               idx -> distincts.indexWhere(_ == item)
           }.toMap
 
-          new CoGroupedJoiner(isize, keyGetter(grouping), joinFunction) {
+          new CoGroupedJoiner(isize, keyGetter(factory, grouping), joinFunction) {
             val distinctSize = dsize
             def distinctIndexOf(orig: Int) = mapping(orig)
           }
         } else {
-          new DistinctCoGroupJoiner(isize, keyGetter(grouping), joinFunction)
+          new DistinctCoGroupJoiner(isize, keyGetter(factory, grouping), joinFunction)
         }
 
         new CoGroup(pipes, groupFields, outFields(dsize), WrappedJoiner(cjoiner))
@@ -625,7 +620,8 @@ object CascadingBackend {
   private def planHashJoin[K, V1, V2, R](left: TypedPipe[(K, V1)],
     right: HashJoinable[K, V2],
     joiner: (K, V1, Iterable[V2]) => Iterator[R],
-    rec: FunctionK[TypedPipe, CascadingPipe]): CascadingPipe[(K, R)] = {
+    rec: FunctionK[TypedPipe, CascadingPipe],
+    factory: OrderingFactory): CascadingPipe[(K, R)] = {
 
     val fd = new FlowDef
     val leftPipe = rec(left).toPipe(kvFields, fd, tup2Setter)
@@ -635,9 +631,9 @@ object CascadingBackend {
     val keyGrouping = right.keyGrouping
     val hashPipe = new HashJoin(
       RichPipe.assignName(leftPipe),
-      Field.singleOrdered("key")(toOrd(keyGrouping)),
+      Field.singleOrdered("key")(factory.toOrdering(keyGrouping).get),
       mappedPipe,
-      Field.singleOrdered("key1")(toOrd(keyGrouping)),
+      Field.singleOrdered("key1")(factory.toOrdering(keyGrouping).get),
       WrappedJoiner(new HashJoiner(singleValuePerRightKey, right.joinFunction, joiner)))
 
     CascadingPipe[(K, R)](
@@ -649,7 +645,8 @@ object CascadingBackend {
 
   private def planReduceStep[K, V1, V2](
     rs: ReduceStep[K, V1, V2],
-    rec: FunctionK[TypedPipe, CascadingPipe]): CascadingPipe[(K, V2)] = {
+    rec: FunctionK[TypedPipe, CascadingPipe],
+    factory: OrderingFactory): CascadingPipe[(K, V2)] = {
 
     val mapped = rec(rs.mapped)
 
@@ -658,7 +655,7 @@ object CascadingBackend {
 
     def groupOpWithValueSort(valueSort: Option[Ordering[V1]])(gb: GroupBuilder => GroupBuilder): CascadingPipe[_ <: (K, V2)] = {
       val flowDef = new FlowDef
-      val pipe = maybeBox[K, V1](rs.keyGrouping, flowDef) { (tupleSetter, fields) =>
+      val pipe = maybeBox[K, V1](factory, rs.keyGrouping, flowDef) { (tupleSetter, fields) =>
         val (sortOpt, ts) = valueSort.map {
           case ordser: OrderedSerialization[V1 @unchecked] =>
             // We get in here when we do a secondary sort
@@ -683,7 +680,7 @@ object CascadingBackend {
         }
       }
 
-      val tupConv = tuple2Conv[K, V2](rs.keyGrouping)
+      val tupConv = tuple2Conv[K, V2](factory, rs.keyGrouping)
       CascadingPipe(pipe, kvFields, flowDef, tupConv)
     }
 
@@ -722,7 +719,7 @@ object CascadingBackend {
           // If its an ordered serialization we need to unbox
           // the value before handing it to the users operation
           _.every(new cascading.pipe.Every(_, valueField,
-            new TypedBufferOp[K, V1, V2](keyConverter(vsr.keyGrouping),
+            new TypedBufferOp[K, V1, V2](keyConverter(factory, vsr.keyGrouping),
               valueConverter(optVOrdering),
               vsr.reduceFn,
               valueField), Fields.REPLACE))
@@ -732,16 +729,18 @@ object CascadingBackend {
       case imr@IteratorMappedReduce(_, _, _, _, _) =>
         groupOp {
           _.every(new cascading.pipe.Every(_, valueField,
-            new TypedBufferOp(keyConverter(imr.keyGrouping), TupleConverter.singleConverter[V1], imr.reduceFn, valueField), Fields.REPLACE))
+            new TypedBufferOp(keyConverter(factory, imr.keyGrouping), TupleConverter.singleConverter[V1], imr.reduceFn, valueField), Fields.REPLACE))
             .reducers(imr.reducers.getOrElse(-1))
             .setDescriptions(imr.descriptions)
         }
     }
   }
 
-  private def toOrd[T](grouping: Grouping[T]): Ordering[T] =
-    orderingFactory.toOrdering(grouping).get
-
-  private def orderingFactory(): OrderingFactory =
+  private def orderingFactory(config: Config): OrderingFactory =
     OrderingFactory.BackwardCompatible()
+
+  private def configFromMode(mode: Mode): Config = mode match {
+    case h: HadoopMode => Config.fromHadoop(h.jobConf)
+    case _ => Config.empty
+  }
 }
