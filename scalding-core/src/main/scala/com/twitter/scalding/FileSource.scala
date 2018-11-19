@@ -15,24 +15,22 @@ limitations under the License.
 */
 package com.twitter.scalding
 
-import java.io.{ InputStream, OutputStream }
-import java.util.{ Properties, UUID }
-
+import java.io.{InputStream, OutputStream}
+import java.util.{Properties, UUID}
 import cascading.scheme.Scheme
-import cascading.scheme.hadoop.{ SequenceFile => CHSequenceFile, TextDelimited => CHTextDelimited, TextLine => CHTextLine }
-import cascading.scheme.local.{ TextDelimited => CLTextDelimited, TextLine => CLTextLine }
-import cascading.tap.{ MultiSourceTap, SinkMode, Tap }
+import cascading.scheme.hadoop.{SequenceFile => CHSequenceFile, TextDelimited => CHTextDelimited, TextLine => CHTextLine}
+import cascading.scheme.local.{TextDelimited => CLTextDelimited, TextLine => CLTextLine}
+import cascading.tap.{MultiSourceTap, SinkMode, Tap}
 import cascading.tap.hadoop.Hfs
 import cascading.tap.local.FileTap
 import cascading.tuple.Fields
 import com.etsy.cascading.tap.local.LocalTap
-import com.twitter.algebird.{ MapAlgebra, OrVal }
+import com.twitter.algebird.{MapAlgebra, OrVal}
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{ FileStatus, Path, PathFilter }
-import org.apache.hadoop.mapred.{ JobConf, OutputCollector, RecordReader }
+import org.apache.hadoop.fs.{FileStatus, FileSystem, Path, PathFilter}
+import org.apache.hadoop.mapred.{JobConf, OutputCollector, RecordReader}
 import org.slf4j.LoggerFactory
-
-import scala.util.{ Failure, Success, Try }
+import scala.util.{Failure, Success, Try}
 
 /**
  * A base class for sources that take a scheme trait.
@@ -112,65 +110,24 @@ object AcceptAllPathFilter extends PathFilter {
 object FileSource {
   val LOG = LoggerFactory.getLogger(this.getClass)
 
-  private[this] def verboseLogEnabled(conf: Configuration): Boolean =
-    conf.getBoolean(Config.VerboseFileSourceLoggingKey, false)
-
-  private[this] def ifVerboseLog(conf: Configuration)(msgFn: => String): Unit = {
-    if (verboseLogEnabled(conf)) {
-      val stack = Thread.currentThread
-        .getStackTrace
-        .iterator
-        .drop(2) // skip getStackTrace and ifVerboseLog
-        .mkString("\n")
-
-      // evaluate call by name param once
-      val msg = msgFn
-
-      LOG.info(
-        s"""
-          |***FileSource Verbose Log***
-          |$stack
-          |
-          |$msg
-        """.stripMargin)
-    }
-  }
-
-  def glob(glob: String, conf: Configuration, filter: PathFilter = AcceptAllPathFilter): Iterable[FileStatus] = {
-    val path = new Path(glob)
-    Option(path.getFileSystem(conf).globStatus(path, filter)).map {
-      _.toIterable // convert java Array to scala Iterable
-    }.getOrElse {
-      Iterable.empty
-    }
-  }
+  def glob(glob: String, conf: Configuration, filter: PathFilter = AcceptAllPathFilter): Iterable[FileStatus] =
+    FileUtils.glob(new Path(glob), fsResolver(conf), filter)
 
   /**
    * @return whether globPath contains non hidden files
    */
-  def globHasNonHiddenPaths(globPath: String, conf: Configuration): Boolean = {
-    val res = glob(globPath, conf, HiddenFileFilter)
-
-    ifVerboseLog(conf) {
-      val allFiles = glob(globPath, conf, AcceptAllPathFilter).mkString("\n")
-      val matched = res.mkString("\n")
-      s"""
-         |globHasNonHiddenPaths:
-         |globPath: $globPath
-         |all files matching globPath, using HiddenFileFilter:
-         |$matched
-         |all files matching globPath, w/o filtering:
-         |$allFiles
-        """.stripMargin
-    }
-
-    res.nonEmpty
-  }
+  def globHasNonHiddenPaths(globPath: String, conf: Configuration): Boolean =
+    FileUtils.globHasNonHiddenPaths(
+      new Path(globPath),
+      fsResolver(conf),
+      verboseLogEnabled(conf)
+    )
 
   /**
    * @return whether globPath contains a _SUCCESS file
    */
-  def globHasSuccessFile(globPath: String, conf: Configuration): Boolean = allGlobFilesWithSuccess(globPath, conf, hiddenFilter = false)
+  def globHasSuccessFile(globPath: String, conf: Configuration): Boolean =
+    allGlobFilesWithSuccess(globPath, conf, hiddenFilter = false)
 
   /**
    * Determines whether each file in the glob has a _SUCCESS sibling file in the same directory
@@ -179,10 +136,28 @@ object FileSource {
    * @param hiddenFilter true, if only non-hidden files are checked
    * @return true if the directory has files after filters are applied
    */
-  def allGlobFilesWithSuccess(globPath: String, conf: Configuration, hiddenFilter: Boolean): Boolean = {
+  def allGlobFilesWithSuccess(globPath: String, conf: Configuration, hiddenFilter: Boolean): Boolean =
+    FileUtils.allGlobFilesWithSuccess(new Path(globPath), fsResolver(conf), hiddenFilter)
+
+  private def fsResolver(conf: Configuration): Path => FileSystem =
+    path => path.getFileSystem(conf)
+
+  private[this] def verboseLogEnabled(conf: Configuration): Boolean =
+    conf.getBoolean(Config.VerboseFileSourceLoggingKey, false)
+}
+
+object FileUtils {
+  /**
+   * Determines whether each file in the glob has a _SUCCESS sibling file in the same directory
+   * @param globPath path to check
+   * @param fs function to create FileSystem
+   * @param hiddenFilter true, if only non-hidden files are checked
+   * @return true if the directory has files after filters are applied
+   */
+  def allGlobFilesWithSuccess(globPath: Path, fsResolver: Path => FileSystem, hiddenFilter: Boolean): Boolean = {
     // Produce tuples (dirName, hasSuccess, hasNonHidden) keyed by dir
     //
-    val usedDirs = glob(globPath, conf, AcceptAllPathFilter)
+    val usedDirs = glob(globPath, fsResolver, AcceptAllPathFilter)
       .map { fileStatus: FileStatus =>
         // stringify Path for Semigroup
         val dir =
@@ -208,6 +183,57 @@ object FileSource {
     //
     uniqueUsedDirs.nonEmpty && uniqueUsedDirs.forall {
       case (_, (hasSuccess, _)) => hasSuccess.get
+    }
+  }
+
+  def glob(glob: Path, fsResolver: Path => FileSystem, filter: PathFilter): Iterable[FileStatus] = {
+    Option(fsResolver(glob).globStatus(glob, filter)).map {
+      _.toIterable // convert java Array to scala Iterable
+    }.getOrElse {
+      Iterable.empty
+    }
+  }
+
+  /**
+   * @return whether globPath contains non hidden files
+   */
+  def globHasNonHiddenPaths(globPath: Path, fs: Path => FileSystem, verbose: Boolean): Boolean = {
+    val res = glob(globPath, fs, HiddenFileFilter)
+
+    ifVerboseLog(verbose) {
+      val allFiles = glob(globPath, fs, AcceptAllPathFilter).mkString("\n")
+      val matched = res.mkString("\n")
+      s"""
+         |globHasNonHiddenPaths:
+         |globPath: $globPath
+         |all files matching globPath, using HiddenFileFilter:
+         |$matched
+         |all files matching globPath, w/o filtering:
+         |$allFiles
+        """.stripMargin
+    }
+
+    res.nonEmpty
+  }
+
+  private[this] def ifVerboseLog(verbose: Boolean)(msgFn: => String): Unit = {
+    if (verbose) {
+      val stack = Thread.currentThread
+        .getStackTrace
+        .iterator
+        .drop(2) // skip getStackTrace and ifVerboseLog
+        .mkString("\n")
+
+      // evaluate call by name param once
+      val msg = msgFn
+
+      FileSource.LOG.info(
+        s"""
+           |***FileSource Verbose Log***
+           |$stack
+           |
+          |$msg
+        """.stripMargin)
     }
   }
 }
