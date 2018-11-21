@@ -1,6 +1,7 @@
 package com.twitter.scalding.datatag
 
-import scala.reflect.runtime.universe._
+import com.twitter.scalding.macros.Macros
+import com.twitter.scalding.serialization.macros.impl.BinaryOrdering
 
 sealed trait DataTag[T]
 object DataTag extends Implicits
@@ -33,19 +34,18 @@ object TupleTag {
   final case class Tuple2[T1, T2](_1: DataTag[T1], _2: DataTag[T2]) extends TupleTag[(T1, T2)]
 }
 
+// TODO: add type tag (or maybe class tag?) as part of declaration?
+// or guarantee that construct & deconstruct are equal generated for same class?
 // define equality on CaseClassTag and UnionTag to be based on TypeTag & members? or just TypeTag?
 // Is TypeTag serializable? Do we want DataTag to be serializable?
 // write method which accepts TypeTag and returns Option[DataTag]?
-sealed trait CaseClassTag[T] extends DataTag[T] {
-  val typeTag: TypeTag[T]
-}
+sealed trait CaseClassTag[T] extends DataTag[T]
 
-object CaseClassTags {
+object CaseClassTag {
+  // add component get&put?
   final case class Component[T](name: String, tag: DataTag[T])
 
   final case class CaseClass1[T, T1](
-    typeTag: TypeTag[T],
-
     _1: Component[T1],
 
     construct: T1 => T,
@@ -53,26 +53,29 @@ object CaseClassTags {
   ) extends CaseClassTag[T]
 
   final case class CaseClass2[T, T1, T2](
-    typeTag: TypeTag[T],
-
     _1: Component[T1],
     _2: Component[T2],
 
     construct: (T1, T2) => T,
     deconstruct: T => (T1, T2)
   ) extends CaseClassTag[T]
+
+  final case class CaseClass3[T, T1, T2, T3](
+    _1: Component[T1],
+    _2: Component[T2],
+    _3: Component[T3],
+
+    construct: (T1, T2, T3) => T,
+    deconstruct: T => (T1, T2, T3)
+  ) extends CaseClassTag[T]
 }
 
-sealed trait UnionTag[T] extends DataTag[T] {
-  val typeTag: TypeTag[T]
-}
+sealed trait UnionTag[T] extends DataTag[T]
 
 object UnionTag {
   final case class Component[T](name: String, tag: DataTag[T])
 
   final case class Union1[T, T1](
-    typeTag: TypeTag[T],
-
     _1: Component[T1],
 
     construct: T1 => T,
@@ -80,8 +83,6 @@ object UnionTag {
   ) extends UnionTag[T]
 
   final case class Union2[T, T1, T2](
-    typeTag: TypeTag[T],
-
     _1: Component[T1],
     _2: Component[T2],
 
@@ -90,8 +91,6 @@ object UnionTag {
   ) extends UnionTag[T]
 
   final case class Union3[T, T1, T2, T3](
-    typeTag: TypeTag[T],
-
     _1: Component[T1],
     _2: Component[T2],
     _3: Component[T3],
@@ -130,6 +129,28 @@ object Test {
     val t3 = implicitly[DataTag[(Int, Int)]]
     val t4 = implicitly[DataTag[(Option[String], Int)]]
 
+    implicit val t2DataTag: DataTag[T2] = implicitly[DataTag[Int]].asInstanceOf[DataTag[T2]]
+
+    val t5 = Macros.caseClassDataTag[Test]
+    val t6 = Macros.caseClassDataTag[Test2[Int]]
+    val t8 = Macros.caseClassDataTag[Test2[T2]]
+//    val t9 = Macros.caseClassDataTag[Test2[_]]
+//    val t10 = Macros.caseClassDataTag[T2]
+    val t11 = Macros.caseClassDataTag[T3]
+//    val t12 = Macros.caseClassDataTag[Rec]
+
+    val ord1 = BinaryOrdering.ordSer[Test]
+
     val t_ = ???
   }
+
+  case class Test(t: Int)
+  case class Test2[T](t: T)
+
+  class T2 extends Test(1)
+
+  case class T3(v1: Int, v2: String, v3: Double)
+
+  case class Rec(v: Int, rec: Rec)
+
 }

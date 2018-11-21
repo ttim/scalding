@@ -52,31 +52,31 @@ object DataTagTypeDescriptor {
 //    val t4 = create(typeTag[(Int, Boolean)])
 //    val t5 = create(typeTag[(Int, (Int, Boolean))])
 
-//    val td1 = typeDescriptor[Option[(Int, Int)]]
-//    val td2 = typeDescriptor[Option[String]]
-//    val td3 = typeDescriptor[Option[(Int, Option[Int])]]
-    val td4 = typeDescriptor[T1]
-    val td5 = typeDescriptor[T2[Option[Int]]]
-//    val td6 = typeDescriptor[T2[_]]
-    val td7 = typeDescriptor[T2[T2[Option[Int]]]]
-    val td8 = typeDescriptor[T2[(Int, Int)]]
-
-    val td9 = typeDescriptor[Int]
-
-    val td10 = typeDescriptor[(Int, (Int, Int))]
-
-    val td11 = typeDescriptor[T2[(Int, (Int, Int))]]
-
-    val td12 = typeDescriptor[(Int, T2[(Int, Int)])]
-
-    val c1 = components(implicitly[DataTag[Int]])
-    val c2 = components(implicitly[DataTag[Option[Int]]])
-    val c3 = components(implicitly[DataTag[(Int, Int)]])
-    val c4 = components(implicitly[DataTag[(Int, (Option[Int], String))]])
-    val c5 = components(implicitly[DataTag[Option[(Int, Int)]]])
-
-
-    val t7 = ???
+////    val td1 = typeDescriptor[Option[(Int, Int)]]
+////    val td2 = typeDescriptor[Option[String]]
+////    val td3 = typeDescriptor[Option[(Int, Option[Int])]]
+//    val td4 = typeDescriptor[T1]
+//    val td5 = typeDescriptor[T2[Option[Int]]]
+////    val td6 = typeDescriptor[T2[_]]
+//    val td7 = typeDescriptor[T2[T2[Option[Int]]]]
+//    val td8 = typeDescriptor[T2[(Int, Int)]]
+//
+//    val td9 = typeDescriptor[Int]
+//
+//    val td10 = typeDescriptor[(Int, (Int, Int))]
+//
+//    val td11 = typeDescriptor[T2[(Int, (Int, Int))]]
+//
+//    val td12 = typeDescriptor[(Int, T2[(Int, Int)])]
+//
+//    val c1 = components(implicitly[DataTag[Int]])
+//    val c2 = components(implicitly[DataTag[Option[Int]]])
+//    val c3 = components(implicitly[DataTag[(Int, Int)]])
+//    val c4 = components(implicitly[DataTag[(Int, (Option[Int], String))]])
+//    val c5 = components(implicitly[DataTag[Option[(Int, Int)]]])
+//
+//
+//    val t7 = ???
   }
 
   case class T1(a: Int)

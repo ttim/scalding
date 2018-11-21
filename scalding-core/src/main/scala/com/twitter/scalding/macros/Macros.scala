@@ -16,10 +16,10 @@
 package com.twitter.scalding.macros
 
 import scala.language.experimental.macros
-
 import com.twitter.scalding._
 import com.twitter.scalding.macros.impl._
 import cascading.tuple.Fields
+import com.twitter.scalding.datatag.DataTag
 
 object Macros {
 
@@ -44,4 +44,6 @@ object Macros {
 
   def caseClassTypeDescriptor[T]: TypeDescriptor[T] = macro TypeDescriptorProviderImpl.caseClassTypeDescriptorImpl[T]
   def caseClassTypeDescriptorWithUnknown[T]: TypeDescriptor[T] = macro TypeDescriptorProviderImpl.caseClassTypeDescriptorWithUnknownImpl[T]
+
+  def caseClassDataTag[T]: DataTag[T] = macro DataTagMacroImpl.caseClassDataTagImpl[T]
 }
