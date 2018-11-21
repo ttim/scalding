@@ -23,14 +23,14 @@ object PrimitiveTag {
 sealed trait ContainerTag[T] extends DataTag[T]
 
 object ContainerTag {
-  sealed case class Option[T](tag: DataTag[T]) extends ContainerTag[scala.Option[T]]
+  final case class Option[T](tag: DataTag[T]) extends ContainerTag[scala.Option[T]]
 }
 
 sealed trait TupleTag[T] extends DataTag[T]
 
 object TupleTag {
-  sealed case class Tuple1[T1](_1: DataTag[T1]) extends TupleTag[scala.Tuple1[T1]]
-  sealed case class Tuple2[T1, T2](_1: DataTag[T1], _2: DataTag[T2]) extends TupleTag[(T1, T2)]
+  final case class Tuple1[T1](_1: DataTag[T1]) extends TupleTag[scala.Tuple1[T1]]
+  final case class Tuple2[T1, T2](_1: DataTag[T1], _2: DataTag[T2]) extends TupleTag[(T1, T2)]
 }
 
 // define equality on CaseClassTag and UnionTag to be based on TypeTag & members? or just TypeTag?
@@ -41,9 +41,9 @@ sealed trait CaseClassTag[T] extends DataTag[T] {
 }
 
 object CaseClassTags {
-  case class Component[T](name: String, tag: DataTag[T])
+  final case class Component[T](name: String, tag: DataTag[T])
 
-  case class CaseClass1[T, T1](
+  final case class CaseClass1[T, T1](
     typeTag: TypeTag[T],
 
     _1: Component[T1],
@@ -52,7 +52,7 @@ object CaseClassTags {
     deconstruct: T => T1
   ) extends CaseClassTag[T]
 
-  case class CaseClass2[T, T1, T2](
+  final case class CaseClass2[T, T1, T2](
     typeTag: TypeTag[T],
 
     _1: Component[T1],
@@ -68,9 +68,9 @@ sealed trait UnionTag[T] extends DataTag[T] {
 }
 
 object UnionTag {
-  case class Component[T](name: String, tag: DataTag[T])
+  final case class Component[T](name: String, tag: DataTag[T])
 
-  case class Union1[T, T1](
+  final case class Union1[T, T1](
     typeTag: TypeTag[T],
 
     _1: Component[T1],
@@ -79,7 +79,7 @@ object UnionTag {
     deconstruct: T => T1
   ) extends UnionTag[T]
 
-  case class Union2[T, T1, T2](
+  final case class Union2[T, T1, T2](
     typeTag: TypeTag[T],
 
     _1: Component[T1],
@@ -89,7 +89,7 @@ object UnionTag {
     deconstruct: T => Choice2[T1, T2]
   ) extends UnionTag[T]
 
-  case class Union3[T, T1, T2, T3](
+  final case class Union3[T, T1, T2, T3](
     typeTag: TypeTag[T],
 
     _1: Component[T1],
