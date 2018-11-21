@@ -47,16 +47,17 @@ sealed trait CaseClassTag[T] extends DataTag[T]
 //case class SourceTag[Ref](format: Format[Ref], ref: Ref)
 // for each thrift java, thrift scala and case classes it's possible to write: ClassTag => DataTag
 object CaseClassTag {
+
   // add component get&put?
   final case class Component[T](name: String, tag: DataTag[T])
 
-  // !!! Make CaseClass1 & others non final and serializable with writeReplace
-  final case class CaseClass1[T, T1](
-    _1: Component[T1],
+  // !!! Make CaseClass1 & others non final and serializable with writeReplace and with methods instead of fn params
+  trait CaseClass1[T, T1] extends CaseClassTag[T] {
+    val _1: Component[T1]
 
-    construct: T1 => T,
-    deconstruct: T => T1
-  ) extends CaseClassTag[T]
+    def construct(arg: T1): T
+    def deconstruct(arg: T): T1
+  }
 
   final case class CaseClass2[T, T1, T2](
     _1: Component[T1],
