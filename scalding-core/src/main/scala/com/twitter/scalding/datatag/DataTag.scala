@@ -52,6 +52,11 @@ object CaseClassTag {
   final case class Component[T](name: String, tag: DataTag[T])
 
   // !!! Make CaseClass1 & others non final and serializable with writeReplace and with methods instead of fn params
+  // Maybe unify with Tuple?
+  // trait ScroogeTag // CaseClassTag { val clazz: Class[_] } , trait TupleTag
+  // arity, getComponent(i), reflectConstruct, reflectDeconstruct
+  // in the beginning enough to put enough for typedescriptor logic and grouping logic
+
   trait CaseClass1[T, T1] extends CaseClassTag[T] {
     val _1: Component[T1]
 
