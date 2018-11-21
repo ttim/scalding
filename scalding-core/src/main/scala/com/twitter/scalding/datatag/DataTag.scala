@@ -50,6 +50,7 @@ object CaseClassTag {
   // add component get&put?
   final case class Component[T](name: String, tag: DataTag[T])
 
+  // !!! Make CaseClass1 & others non final and serializable with writeReplace
   final case class CaseClass1[T, T1](
     _1: Component[T1],
 
