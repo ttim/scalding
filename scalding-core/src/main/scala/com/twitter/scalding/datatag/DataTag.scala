@@ -27,12 +27,76 @@ object ContainerTag {
   final case class Option[T](tag: DataTag[T]) extends ContainerTag[scala.Option[T]]
 }
 
-sealed trait TupleTag[T] extends DataTag[T]
+sealed trait ProductTag[T, P <: Product] extends DataTag[T] {
+  val arity: Int
+  val components: ProductTag.Components
+
+  def toProduct(value: T): P
+  def fromProduct(product: P): T
+}
+
+object ProductTag {
+  sealed trait Components
+
+  object Components {
+    case class Named(components: List[(String, DataTag[_])]) extends Components
+    case class Unnamed(components: List[DataTag[_]]) extends Components
+  }
+
+  trait _1[T, P1] extends ProductTag[T, Product1[P1]]
+  trait _2[T, P1, P2] extends ProductTag[T, Product2[P1, P2]]
+  trait _3[T, P1, P2, P3] extends ProductTag[T, Product3[P1, P2, P3]]
+}
+
+
+trait TupleTag[T]
 
 object TupleTag {
-  final case class Tuple1[T1](_1: DataTag[T1]) extends TupleTag[scala.Tuple1[T1]]
-  final case class Tuple2[T1, T2](_1: DataTag[T1], _2: DataTag[T2]) extends TupleTag[(T1, T2)]
+
+  final case class _1[T1](component1: DataTag[T1]) extends ProductTag._1[Tuple1[T1], T1] {
+    override val arity: Int = 1
+    override val components: ProductTag.Components = ProductTag.Components.Unnamed(List(component1))
+
+    override def toProduct(value: Tuple1[T1]): Product1[T1] = value
+
+    override def fromProduct(product: Product1[T1]): Tuple1[T1] =
+      if (product.isInstanceOf[Tuple1[T1]]) product.asInstanceOf[Tuple1[T1]] else Tuple1(product._1)
+  }
+
+  final case class _2[T1, T2](
+    component1: DataTag[T1],
+    component2: DataTag[T2]
+  ) extends ProductTag._2[Tuple2[T1, T2], T1, T2] {
+    override val arity: Int = 2
+    override val components: ProductTag.Components = ProductTag.Components
+      .Unnamed(List(component1, component2))
+
+    override def toProduct(value: Tuple2[T1, T2]): Product2[T1, T2] = value
+
+    override def fromProduct(product: Product2[T1, T2]): Tuple2[T1, T2] =
+      if (product.isInstanceOf[Tuple2[T1, T2]])
+        product.asInstanceOf[Tuple2[T1, T2]]
+      else
+        Tuple2(product._1, product._2)
+  }
+
+  final case class _3[T1, T2, T3](
+    component1: DataTag[T1],
+    component2: DataTag[T2],
+    component3: DataTag[T3]
+  ) extends ProductTag._3[Tuple3[T1, T2, T3], T1, T2, T3] {
+    override val arity: Int = 3
+    override val components: ProductTag.Components = ProductTag.Components
+      .Unnamed(List(component1, component2, component3))
+
+    override def toProduct(value: Tuple3[T1, T2, T3]): Product3[T1, T2, T3] = value
+
+    override def fromProduct(product: Product3[T1, T2, T3]): Tuple3[T1, T2, T3] =
+      if (product.isInstanceOf[Tuple3[T1, T2, T3]]) product
+        .asInstanceOf[Tuple3[T1, T2, T3]] else Tuple3(product._1, product._2, product._3)
+  }
 }
+
 
 // TODO: add type tag (or maybe class tag?) as part of declaration?
 // or guarantee that construct & deconstruct are equal generated for same class?
@@ -126,13 +190,20 @@ trait Implicits {
   implicit val string: PrimitiveTag[String] = PrimitiveTag.String
 
   // Containers
-  implicit def option[T: DataTag]: ContainerTag[Option[T]] = ContainerTag.Option(implicitly[DataTag[T]])
+  implicit def option[T: DataTag]: ContainerTag.Option[T] = ContainerTag.Option(implicitly[DataTag[T]])
 
   // Tuples
-  implicit def tuple1[T1: DataTag]: TupleTag[Tuple1[T1]] = TupleTag.Tuple1(implicitly[DataTag[T1]])
-  implicit def tuple2[T1: DataTag, T2: DataTag]: TupleTag[Tuple2[T1, T2]] = TupleTag.Tuple2(
+  implicit def tuple1[T1: DataTag]: TupleTag._1[T1] = TupleTag._1(implicitly[DataTag[T1]])
+
+  implicit def tuple2[T1: DataTag, T2: DataTag]: TupleTag._2[T1, T2] = TupleTag._2(
     implicitly[DataTag[T1]],
     implicitly[DataTag[T2]]
+  )
+
+  implicit def tuple3[T1: DataTag, T2: DataTag, T3: DataTag]: TupleTag._3[T1, T2, T3] = TupleTag._3(
+    implicitly[DataTag[T1]],
+    implicitly[DataTag[T2]],
+    implicitly[DataTag[T3]]
   )
 
   // Case classes macro?
