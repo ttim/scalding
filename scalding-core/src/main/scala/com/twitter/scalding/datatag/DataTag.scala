@@ -41,6 +41,11 @@ object TupleTag {
 // write method which accepts TypeTag and returns Option[DataTag]?
 sealed trait CaseClassTag[T] extends DataTag[T]
 
+//trait Format[Ref] {
+//  def create(id: Ref): Any
+//}
+//case class SourceTag[Ref](format: Format[Ref], ref: Ref)
+// for each thrift java, thrift scala and case classes it's possible to write: ClassTag => DataTag
 object CaseClassTag {
   // add component get&put?
   final case class Component[T](name: String, tag: DataTag[T])
