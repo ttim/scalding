@@ -39,7 +39,12 @@ object TupleTag {
 // define equality on CaseClassTag and UnionTag to be based on TypeTag & members? or just TypeTag?
 // Is TypeTag serializable? Do we want DataTag to be serializable?
 // write method which accepts TypeTag and returns Option[DataTag]?
-sealed trait CaseClassTag[T] extends DataTag[T]
+sealed trait CaseClassTag[T] extends DataTag[T] {
+  val arity: Int
+  val components: List[CaseClassTag.Component[_]]
+  def toArray(arg: T): Array[_]
+  def fromArray(arr: Array[_]): T
+}
 
 //trait Format[Ref] {
 //  def create(id: Ref): Any
