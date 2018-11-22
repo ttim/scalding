@@ -54,34 +54,18 @@ object ProductTag {
   trait _3[T, P1, P2, P3] extends ProductTag[T, Product3[P1, P2, P3]]
 }
 
-sealed trait UnionTag[T] extends DataTag[T]
+sealed trait CoproductTag[T, C <: Choice] extends DataTag[T] {
+  val arity: Int
+  val components: List[(String, DataTag[_])]
 
-object UnionTag {
-  final case class Component[T](name: String, tag: DataTag[T])
+  def toProduct(value: T): C
+  def fromProduct(product: C): T
+}
 
-  final case class Union1[T, T1](
-    _1: Component[T1],
-
-    construct: T1 => T,
-    deconstruct: T => T1
-  ) extends UnionTag[T]
-
-  final case class Union2[T, T1, T2](
-    _1: Component[T1],
-    _2: Component[T2],
-
-    construct: Choice2[T1, T2] => T,
-    deconstruct: T => Choice2[T1, T2]
-  ) extends UnionTag[T]
-
-  final case class Union3[T, T1, T2, T3](
-    _1: Component[T1],
-    _2: Component[T2],
-    _3: Component[T3],
-
-    construct: Choice3[T1, T2, T3] => T,
-    deconstruct: T => Choice3[T1, T2, T3]
-  ) extends UnionTag[T]
+object CoproductTag {
+  trait _1[T, T1] extends CoproductTag[T, Choice1[T1]]
+  trait _2[T, T1, T2] extends CoproductTag[T, Choice2[T1, T2]]
+  trait _3[T, T1, T2, T3] extends CoproductTag[T, Choice3[T1, T2, T3]]
 }
 
 trait PrimitiveTagImplicits {
