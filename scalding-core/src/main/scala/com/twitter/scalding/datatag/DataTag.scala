@@ -46,7 +46,7 @@ object ProductTag {
 
   object Components {
     case class Named(components: List[(String, DataTag[_])]) extends Components
-    case class Unnamed(components: List[DataTag[_]]) extends Components
+    case class Indexed(components: List[DataTag[_]]) extends Components
   }
 
   trait _1[T, P1] extends ProductTag[T, Product1[P1]]

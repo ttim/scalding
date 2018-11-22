@@ -6,7 +6,7 @@ object TupleTag {
 
   final case class _1[T1](component1: DataTag[T1]) extends ProductTag._1[Tuple1[T1], T1] with TupleTag {
     override val arity: Int = 1
-    override val components: ProductTag.Components = ProductTag.Components.Unnamed(List(component1))
+    override val components: ProductTag.Components = ProductTag.Components.Indexed(List(component1))
 
     override def toProduct(value: Tuple1[T1]): Product1[T1] = value
 
@@ -20,7 +20,7 @@ object TupleTag {
   ) extends ProductTag._2[Tuple2[T1, T2], T1, T2] with TupleTag {
     override val arity: Int = 2
     override val components: ProductTag.Components = ProductTag.Components
-      .Unnamed(List(component1, component2))
+      .Indexed(List(component1, component2))
 
     override def toProduct(value: Tuple2[T1, T2]): Product2[T1, T2] = value
 
@@ -38,7 +38,7 @@ object TupleTag {
   ) extends ProductTag._3[Tuple3[T1, T2, T3], T1, T2, T3] with TupleTag {
     override val arity: Int = 3
     override val components: ProductTag.Components = ProductTag.Components
-      .Unnamed(List(component1, component2, component3))
+      .Indexed(List(component1, component2, component3))
 
     override def toProduct(value: Tuple3[T1, T2, T3]): Product3[T1, T2, T3] = value
 
