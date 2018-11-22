@@ -54,18 +54,18 @@ object ProductTag {
   trait _3[T, P1, P2, P3] extends ProductTag[T, Product3[P1, P2, P3]]
 }
 
-sealed trait CoproductTag[T, C <: Choice] extends DataTag[T] {
+sealed trait CoProductTag[T, C <: CoProduct] extends DataTag[T] {
   val arity: Int
   val components: List[(String, DataTag[_])]
 
-  def toProduct(value: T): C
-  def fromProduct(product: C): T
+  def toCoProduct(value: T): C
+  def fromCoProduct(product: C): T
 }
 
-object CoproductTag {
-  trait _1[T, T1] extends CoproductTag[T, Choice1[T1]]
-  trait _2[T, T1, T2] extends CoproductTag[T, Choice2[T1, T2]]
-  trait _3[T, T1, T2, T3] extends CoproductTag[T, Choice3[T1, T2, T3]]
+object CoProductTag {
+  trait _1[T, T1] extends CoProductTag[T, CoProduct1[T1]]
+  trait _2[T, T1, T2] extends CoProductTag[T, CoProduct2[T1, T2]]
+  trait _3[T, T1, T2, T3] extends CoProductTag[T, CoProduct3[T1, T2, T3]]
 }
 
 trait PrimitiveTagImplicits {
