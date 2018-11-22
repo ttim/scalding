@@ -45,6 +45,7 @@ object ProductTag {
   sealed trait Components
 
   object Components {
+    // add components get&put?
     case class Named(components: List[(String, DataTag[_])]) extends Components
     case class Indexed(components: List[DataTag[_]]) extends Components
   }
