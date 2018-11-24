@@ -90,12 +90,12 @@ object Test {
 
     implicit val t2DataTag: DataTag[T2] = implicitly[DataTag[Int]].asInstanceOf[DataTag[T2]]
 
-    val t5 = Macros.caseClassDataTag[Test]
-    val t6 = Macros.caseClassDataTag[Test2[Int]]
-    val t8 = Macros.caseClassDataTag[Test2[T2]]
+//    val t5 = Macros.caseClassDataTag[Test]
+//    val t6 = Macros.caseClassDataTag[Test2[Int]]
+//    val t8 = Macros.caseClassDataTag[Test2[T2]]
 //    val t9 = Macros.caseClassDataTag[Test2[_]]
 //    val t10 = Macros.caseClassDataTag[T2]
-    val t11 = Macros.caseClassDataTag[T3]
+//    val t11 = Macros.caseClassDataTag[T3]
 //    val t12 = Macros.caseClassDataTag[Rec]
 
     val ord1 = BinaryOrdering.ordSer[Test]

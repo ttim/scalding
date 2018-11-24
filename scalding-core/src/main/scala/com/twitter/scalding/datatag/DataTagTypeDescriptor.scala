@@ -29,12 +29,12 @@ object DataTagTypeDescriptor {
         }
       }
 
-    case TupleTag.Tuple1(_1) =>
-      for (cmp1 <- components(_1)
+    case TupleTag._1(c1) =>
+      for (cmp1 <- components(c1)
       ) yield repoint(Tuple(0, _))(cmp1)
-    case TupleTag.Tuple2(_1, _2) =>
-      for (cmp1 <- components(_1);
-           cmp2 <- components(_2)
+    case TupleTag._2(c1, c2) =>
+      for (cmp1 <- components(c1);
+           cmp2 <- components(c2)
       ) yield repoint(Tuple(0, _))(cmp1) ++ repoint(Tuple(1, _))(cmp2)
 
     // TODO: case classes
